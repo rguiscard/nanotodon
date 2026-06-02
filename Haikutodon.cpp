@@ -18,26 +18,36 @@
 #include <ScrollView.h>
 #include <MessageRunner.h>
 #include <LayoutBuilder.h>
+#include <Button.h>
 
 class MainWindow : public BWindow {
 public:
 	MainWindow(BRect frame)
-		: BWindow(frame, "Haikutodon", B_TITLED_WINDOW, B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS)
+		: BWindow(frame, "Haikutodon", B_TITLED_WINDOW, B_ASYNCHRONOUS_CONTROLS)
 	{
 		SetFlags(Flags() | B_QUIT_ON_WINDOW_CLOSE);
 
 		BMenuBar* menuBar = new BMenuBar("menu_bar");
+		BMenu* fileMenu = new BMenu("File");
+		fileMenu->AddItem(new BMenuItem("Quit", new BMessage('quit'), 'Q', B_COMMAND_KEY));
+		menuBar->AddItem(fileMenu);
 
-		BMenu* appMenu = new BMenu("File");
-		appMenu->AddItem(new BMenuItem("Quit", new BMessage('quit'), 'Q', B_COMMAND_KEY));
-		menuBar->AddItem(appMenu);
+		fTextView = new BTextView(BRect(0, 0, 10000, 10000), "text_view", BRect(0, 0, 10000, 10000), B_FOLLOW_ALL_SIDES, B_WILL_DRAW);
+		BScrollView* scrollView = new BScrollView("scroll_view", fTextView, 0, false, true);
 
-		fTextView = new BTextView(BRect(0, 0, 1000, 1000), "text_view", BRect(0, 0, 10000, 10000), B_FOLLOW_ALL_SIDES);
-		BScrollView* scrollView = new BScrollView("scroll_view", fTextView, B_FOLLOW_ALL_SIDES, true, true, B_NO_BORDER);
+		fInputView = new BTextView(BRect(0, 0, 10000, 1000), "input_view", BRect(0, 0, 10000, 1000), B_FOLLOW_ALL_SIDES, B_WILL_DRAW);
+		BScrollView* inputScrollView = new BScrollView("input_scroll_view", fInputView, 0, false, true);
 
-		BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
+		fSendButton = new BButton("send_button", "Send", new BMessage('send'));
+
+		BSplitView* splitView = new BSplitView(B_VERTICAL, 0.0f);
+		splitView->AddChild(scrollView, 0.7f);
+		splitView->AddChild(inputScrollView, 0.3f);
+
+		BLayoutBuilder::Group<>(this, B_VERTICAL)
 			.Add(menuBar)
-			.Add(scrollView)
+			.Add(splitView)
+			.Add(fSendButton)
 			.End();
 	}
 
@@ -48,6 +58,9 @@ public:
 				break;
 			case 'poll':
 				ProcessQueue();
+				break;
+			case 'send':
+				PostToot();
 				break;
 			default:
 				BWindow::MessageReceived(message);
@@ -65,8 +78,18 @@ public:
 		}
 	}
 
+	void PostToot(void) {
+		const char* text = fInputView->Text();
+		if (text && *text) {
+			do_toot(const_cast<char*>(text));
+			fInputView->SetText("");
+		}
+	}
+
 private:
 	BTextView* fTextView;
+	BTextView* fInputView;
+	BButton* fSendButton;
 };
 
 static MainWindow* gMainWindow = NULL;
@@ -77,7 +100,6 @@ int main(int argc, char *argv[])
 {
     config.profile_name[0] = 0;
 
-    // オプション解析
     for(int i=1;i<argc;i++) {
         if(!strcmp(argv[i],"-mono")) {
             monoflag = 1;
@@ -142,10 +164,8 @@ int main(int argc, char *argv[])
 
     if(env_lang && !strcmp(env_lang,"ja_JP.UTF-8")) msg_lang = 1;
 
-    // トークンファイルオープン
     FILE *fp = fopen(config.dot_token, "rb");
     if(fp) {
-        // 存在すれば読み込む
         fclose(fp);
         struct sjson_context *ctx;
         char *json;
@@ -159,7 +179,6 @@ int main(int argc, char *argv[])
         sjson_destroy_context(ctx);
         free(json);
     } else {
-        // ない場合は登録処理へ
         char domain[256];
         char *ck;
         char *cs;
@@ -171,7 +190,6 @@ int main(int argc, char *argv[])
         scanf("%255s", domain);
         printf("\n");
 
-        // ドメイン名を保存する
         FILE *f2 = fopen(config.dot_domain, "wb");
         fprintf(f2, "%s", domain);
         fclose(f2);
@@ -186,17 +204,13 @@ int main(int argc, char *argv[])
         strcpy(json_name, dot_ckcs);
         strcpy(domain_string, domain);
 
-        // クライアントキーファイルをオープン
         FILE *ckcs = fopen(json_name, "rb");
         if(!ckcs) {
-            // なければ作る
             do_create_client(domain, dot_ckcs);
         } else {
-            // あったら閉じる
             fclose(ckcs);
         }
 
-        // クライアントキーファイルを読む
         struct sjson_context *ctx;
         char *json;
         struct sjson_node *cko, *cso;
@@ -204,7 +218,6 @@ int main(int argc, char *argv[])
         int r1 = read_json_fom_path(jobj_from_file, "client_id", &cko);
         int r2 = read_json_fom_path(jobj_from_file, "client_secret", &cso);
         if(!r1 || !r2) {
-            // もしおかしければ最初まで戻る
             printf("%s", nano_msg_list[msg_lang][NANO_MSG_SOME_WRONG_DOMAIN]);
             remove(json_name);
             remove(config.dot_domain);
@@ -221,26 +234,21 @@ int main(int argc, char *argv[])
         printf("%s", nano_msg_list[msg_lang][NANO_MSG_AUTHCATION]);
         printf("%s", nano_msg_list[msg_lang][NANO_MSG_OAUTH_URL]);
 
-        // 認証用URLを表示、コードを入力させる
         printf("https://%s/oauth/authorize?client_id=%s&response_type=code&redirect_uri=urn:ietf:wg:oauth:2.0:oob&scope=read%%20write%%20follow\n", domain, ck);
         printf(">");
         scanf("%255s", code);
         printf("\n");
 
-        // 改行読み飛ばし
         getchar();
 
-        // 承認コードで認証
         do_oauth(code, ck, cs);
         free(ck);
         free(cs);
 
-        // トークンファイルを読む
         struct sjson_node *token;
         jobj_from_file = read_json_from_file(config.dot_token, &json, &ctx);
         int r3 = read_json_fom_path(jobj_from_file, "access_token", &token);
         if(!r3) {
-            // もしおかしければ最初まで戻る
             printf("%s", nano_msg_list[msg_lang][NANO_MSG_SOME_WRONG_OAUTH]);
             remove(json_name);
             remove(config.dot_domain);
@@ -248,7 +256,6 @@ int main(int argc, char *argv[])
             goto retry1;
         }
 
-        // httpヘッダに添付する用の形式でコピーしておく
         sprintf(access_token, "Authorization: Bearer %s", token->string_);
         printf("%s", nano_msg_list[msg_lang][NANO_MSG_FINISH]);
 
@@ -270,8 +277,7 @@ int main(int argc, char *argv[])
     MainWindow* window = new MainWindow(BRect(100, 100, 600, 400));
     window->Show();
 
-    // Set up periodic polling for the queue (every 100ms)
-    bigtime_t interval = 100000; // 100ms
+    bigtime_t interval = 100000;
     BMessage pollMessage('poll');
     BMessageRunner* runner = new BMessageRunner(window, &pollMessage, interval, -1);
 
@@ -286,21 +292,18 @@ int main(int argc, char *argv[])
     pthread_t stream_thread;
     pthread_t prompt_thread;
 
-    // ストリーミングスレッド生成
     pthread_create(&stream_thread, NULL, stream_thread_func, NULL);
     pthread_create(&prompt_thread, NULL, prompt_thread_func, NULL);
 
     while (1)
     {
         sbctx_t sb;
-        // queueに来ていたら表示する
         if(!squeue_dequeue(&sb)) {
             fwrite(sb.buf, sb.bufptr, 1, stdout);
             free(sb.buf);
         }
 
         {
-            // あまり短いと謎マシンが死ぬので100ms
             const struct timespec req = {0, 100 * 1000000};
             nanosleep(&req, NULL);
         }
