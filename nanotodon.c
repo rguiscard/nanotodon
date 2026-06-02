@@ -35,28 +35,28 @@ static int limit_timeline = 20;
 static pthread_mutex_t prompt_mutex;
 static int prompt_notify = 0;
 
-// ストリーミングを受信する関数のポインタ
+// Pointer to the function that receives streaming data
 static void (*streaming_received_handler)(void);
 
-// 受信したストリーミングを処理する関数のポインタ
+// Pointer to the function that processes received streaming data
 static void (*stream_event_handler)(struct sjson_node *);
 
-// インスタンスにクライアントを登録する
+// Register the client with the instance
 static void do_create_client(char *, char *);
 
-// Timelineの受信
+// Receive timeline
 static void get_timeline(void);
 
-// 承認コードを使ったOAuth処理
+// OAuth processing using authorization code
 static void do_oauth(char *, char *, char *);
 
-// Tootを行う
+// Post a toot
 static void do_toot(char *);
 
-// ストリーミングでのToot受信処理,stream_event_handlerへ代入
+// Streaming toot receipt processing, assigned to stream_event_handler
 static void stream_event_update(struct sjson_node *);
 
-// ストリーミングでの通知受信処理,stream_event_handlerへ代入
+// Streaming notification receipt processing, assigned to stream_event_handler
 static void stream_event_notify(struct sjson_node *);
 
 // アクセストークン文字列

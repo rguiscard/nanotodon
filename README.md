@@ -1,53 +1,53 @@
 # nanotodon
 CLI Mastodon Client
 
-# 注意
-現在かなり大規模に開発中です。安定利用はできない可能性があります
+# Note
+It is currently under heavy development; stable use may not be possible.
 
-# 依存ライブラリ
+# Dependencies
 - cURL
 - pthread
 
-# ビルド
-## pkgsrc環境
+# Build
+## pkgsrc environment
 ```CFLAGS="-I/usr/pkg/include" LDFLAGS="-L/usr/pkg/lib -Wl,-R/usr/pkg/lib" make```
 
 ## OpenBSD
 ```CFLAGS="-I/usr/local/include" LDFLAGS="-L/usr/local/lib" make```
 
-## その他
+## Other
 ```make```
 
-# オプション
+# Options
 - ```-mono```  
-  - 色付け無効化(太字のみ有効)(for 1bpp framebuffer)
+   - Disable coloring (bold only enabled) (for 1bpp framebuffer)
 
 - ```-unlock```  
-  - 公開範囲が PRIVATE/DIRECT の投稿を表示する
+   - Show posts with privacy PRIVATE/DIRECT
 
 - ```-noemoji```  
-  - ReblogやFavourite、公開範囲表示などのUI要素に絵文字を利用しない
+   - Do not use emojis in UI elements such as reblog, favourite, and privacy visibility
 
 - ```-profile <name>```  
-  - プロファイル ``<name>`` を利用する
+   - Use profile ``<name>``
 
 - ```-timeline <public|local|home>```  
-  - (WIP)流すタイムラインの選択
+   - (WIP) Select timeline to stream
 
 - ```-tllimit <num>```  
-  - (WIP)起動時にrest APIで取得するトゥート数の指定(デフォルトは 20)
+   - (WIP) Specify number of toots to fetch via REST API at startup (default is 20)
 
-# 投稿方法
-1. TLが流れているときにEnterを押す
-2. ``> ``とプロンプトが出るのでToot内容を入力(``\n``と``\\``が利用できます)
-3. Enterを押すと投稿
-- Toot入力中はTLの更新がブロックされます
-- 以前のVerにあった``/private``等も利用できます
+# How to post
+1. Press Enter when the timeline is flowing
+2. A prompt ``> `` appears; enter the toot content (``\n`` and ``\\`` can be used)
+3. Press Enter to post
+- While composing a toot, timeline updates are blocked
+- Features such as ``/private`` from previous versions are also available
 
-# 詳しいガイド
+# Detailed guide
 TBW  
 
-# 動いてるっぽい環境(24/12/07)
+# Apparently working environment (24/12/07)
 - WSL2 + VSCode Terminal(w/ Sixel)
 - WSL2 + Windows Terminal
 - OpenBSD/amd64
@@ -61,7 +61,7 @@ TBW
 - NetBSD/hp300 10.0 (w/ Sixel)
 - NetBSD/sun3 10.0 (w/ Sixel)
 
-# ~~テスト済み環境(0.1.x-0.3.x)~~
+# ~~Tested environments (0.1.x-0.3.x)~~
 - ~~NetBSD/luna68k + mlterm~~
 - ~~NetBSD/x68k + mlterm~~
 - ~~NetBSD/sun3 + mlterm~~
