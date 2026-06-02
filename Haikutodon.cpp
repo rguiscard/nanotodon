@@ -5,6 +5,74 @@
 #include <pthread.h>
 #include "Haikutodon.h"
 
+#ifdef __HAIKU__
+
+#include <Application.h>
+#include <Window.h>
+#include <View.h>
+#include <MenuBar.h>
+#include <Menu.h>
+#include <MenuItem.h>
+#include <Message.h>
+#include <TextView.h>
+#include <ScrollView.h>
+#include <MessageRunner.h>
+#include <LayoutBuilder.h>
+
+class MainWindow : public BWindow {
+public:
+	MainWindow(BRect frame)
+		: BWindow(frame, "Haikutodon", B_TITLED_WINDOW, B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS)
+	{
+		SetFlags(Flags() | B_QUIT_ON_WINDOW_CLOSE);
+
+		BMenuBar* menuBar = new BMenuBar("menu_bar");
+
+		BMenu* appMenu = new BMenu("File");
+		appMenu->AddItem(new BMenuItem("Quit", new BMessage('quit'), 'Q', B_COMMAND_KEY));
+		menuBar->AddItem(appMenu);
+
+		fTextView = new BTextView(BRect(0, 0, 1000, 1000), "text_view", BRect(0, 0, 10000, 10000), B_FOLLOW_ALL_SIDES);
+		BScrollView* scrollView = new BScrollView("scroll_view", fTextView, B_FOLLOW_ALL_SIDES, true, true, B_NO_BORDER);
+
+		BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
+			.Add(menuBar)
+			.Add(scrollView)
+			.End();
+	}
+
+	virtual void MessageReceived(BMessage* message) {
+		switch (message->what) {
+			case 'quit':
+				be_app->PostMessage(B_QUIT_REQUESTED);
+				break;
+			case 'poll':
+				ProcessQueue();
+				break;
+			default:
+				BWindow::MessageReceived(message);
+		}
+	}
+
+	void ProcessQueue(void) {
+		sbctx_t sb;
+		while (!squeue_dequeue(&sb)) {
+			if (sb.buf && sb.bufptr > 0) {
+				fTextView->Insert(sb.buf, sb.bufptr, NULL);
+				fTextView->ScrollToSelection();
+			}
+			free(sb.buf);
+		}
+	}
+
+private:
+	BTextView* fTextView;
+};
+
+static MainWindow* gMainWindow = NULL;
+
+#endif // __HAIKU__
+
 int main(int argc, char *argv[])
 {
     config.profile_name[0] = 0;
@@ -196,6 +264,25 @@ int main(int argc, char *argv[])
     sixel_init();
 #endif
 
+#ifdef __HAIKU__
+    BApplication app("application/x-vnd.haikutodon");
+
+    MainWindow* window = new MainWindow(BRect(100, 100, 600, 400));
+    window->Show();
+
+    // Set up periodic polling for the queue (every 100ms)
+    bigtime_t interval = 100000; // 100ms
+    BMessage pollMessage('poll');
+    BMessageRunner* runner = new BMessageRunner(window, &pollMessage, interval, -1);
+
+    pthread_t stream_thread;
+    pthread_create(&stream_thread, NULL, stream_thread_func, NULL);
+
+    be_app->Run();
+
+    delete runner;
+    return 0;
+#else
     pthread_t stream_thread;
     pthread_t prompt_thread;
 
@@ -212,35 +299,7 @@ int main(int argc, char *argv[])
             free(sb.buf);
         }
 
-        // プロンプト通知が来てたらtoot処理
-        if(prompt_notify != 0) {
-            fputs("> ", stdout);
-            char status[1024];
-            fgets(status, 1024, stdin);
-
-            char status2[1024];
-            char *p1 = status, *p2 = status2;
-
-            for(;*p1 != 0; p1++, p2++) {
-                if(*p1 == '\\') {
-                    if(p1[1] == '\\') {
-                        *p2 = '\\';
-                        p1++;
-                    }
-                    if(p1[1] == 'n') {
-                        *p2 = '\n';
-                        p1++;
-                    }
-                } else {
-                    *p2 = *p1;
-                }
-            }
-
-            *p2 = 0;
-
-            do_toot(status2);
-            prompt_notify = 0;
-        } else {
+        {
             // あまり短いと謎マシンが死ぬので100ms
             const struct timespec req = {0, 100 * 1000000};
             nanosleep(&req, NULL);
@@ -248,4 +307,5 @@ int main(int argc, char *argv[])
     }
 
     return 0;
+#endif
 }

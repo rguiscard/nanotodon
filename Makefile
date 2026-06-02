@@ -27,6 +27,12 @@ CFLAGS += -DSUPPORT_XDG_BASE_DIR
 #CFLAGS += -I/usr/local/include
 #LDFLAGS += -L/usr/local/lib
 
+# for Haiku
+ifeq ($(shell uname -s), Haiku)
+CFLAGS += -D__HAIKU__
+LDFLAGS += -lbe -lmedia -ltracker
+endif
+
 # default
 default : $(TARGET)
 
