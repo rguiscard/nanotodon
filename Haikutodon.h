@@ -1,6 +1,10 @@
 #ifndef __HAIKUTODON_H__
 #define __HAIKUTODON_H__
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "nanotodon.h"
 #include "config.h"
 #include <stdint.h>
@@ -34,5 +38,9 @@ void get_timeline(void);
 void do_toot(char *s);
 void do_create_client(char *domain, char *dot_ckcs);
 void do_oauth(char *code, char *ck, char *cs);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // __HAIKUTODON_H__

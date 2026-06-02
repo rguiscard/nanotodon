@@ -1,6 +1,9 @@
 TARGET = nanotodon
 OBJS = nanotodon.o sbuf.o squeue.o sixel.o utils.o config.o messages.o Haikutodon.o
 
+CC=gcc
+CXX=g++
+
 # To use both XPG4 strptime(3) and GNU timegm(3)
 CFLAGS += -D_GNU_SOURCE
 
@@ -29,7 +32,7 @@ default : $(TARGET)
 
 # rules
 $(TARGET) : $(OBJS) Makefile
-	$(CC) -o $(TARGET) $(OBJS) $(LDFLAGS) $(LDLIBS)
+	$(CXX) -o $(TARGET) $(OBJS) $(LDFLAGS) $(LDLIBS)
 
 # commands
 clean :
@@ -40,5 +43,5 @@ clean :
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Explicit rule for Haikutodon.o (compile as C)
-Haikutodon.o: Haikutodon.cpp Haikutodon.h
-	$(CC) $(CFLAGS) -x c -c $< -o $@
+%.o : %.cpp
+	$(CXX) $(CFLAGS) -c $< -o $@
