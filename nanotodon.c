@@ -25,15 +25,16 @@ static char *streaming_json = NULL;
 #define URI_STREAM "api/v1/streaming/"
 #define URI_TIMELINE "api/v1/timelines/"
 
-static const char *selected_stream = "user";
-static const char *selected_timeline = "home";
-static char append_timeline[64];
-static int limit_timeline = 20;
+const char *selected_stream = "user";
+const char *selected_timeline = "home";
+char append_timeline[64];
+int limit_timeline = 20;
 
 #define CURL_USERAGENT "curl/" LIBCURL_VERSION
 
-static pthread_mutex_t prompt_mutex;
-static int prompt_notify = 0;
+
+int prompt_notify = 0;
+pthread_mutex_t prompt_mutex;
 
 // Pointer to the function that receives streaming data
 static void (*streaming_received_handler)(void);
@@ -42,16 +43,16 @@ static void (*streaming_received_handler)(void);
 static void (*stream_event_handler)(struct sjson_node *);
 
 // Register the client with the instance
-static void do_create_client(char *, char *);
+void do_create_client(char *, char *);
 
 // Receive timeline
-static void get_timeline(void);
+void get_timeline(void);
 
 // OAuth processing using authorization code
-static void do_oauth(char *, char *, char *);
+void do_oauth(char *, char *, char *);
 
 // Post a toot
-static void do_toot(char *);
+void do_toot(char *);
 
 // Streaming toot receipt processing, assigned to stream_event_handler
 static void stream_event_update(struct sjson_node *);
@@ -59,20 +60,20 @@ static void stream_event_update(struct sjson_node *);
 // Streaming notification receipt processing, assigned to stream_event_handler
 static void stream_event_notify(struct sjson_node *);
 
-// アクセストークン文字列
-static char access_token[256];
+// Access token string
+char access_token[256];
 
-// ドメイン文字列
+// Domain string
 char domain_string[256];
 
-// コンフィグファイルパス構造体
+// Config file path structure
 struct nanotodon_config config;
 
 int monoflag = 0;
-static int hidlckflag = 1;
-static int noemojiflag = 0;
+int hidlckflag = 1;
+int noemojiflag = 0;
 
-// curlから呼び出されるストリーミング受信関数
+// Streaming receive function called from curl
 static size_t streaming_callback(void* ptr, size_t size, size_t nmemb, void* data) {
 	if (size * nmemb == 0)
 		return 0;
@@ -90,10 +91,10 @@ static size_t streaming_callback(void* ptr, size_t size, size_t nmemb, void* dat
 
 	if (str != NULL) {
 		strncat(str, ptr, realsize);
-		// 改行が来たらデータ終端(一回の受信に収まるとは限らない)
+		// If a newline arrives, it indicates end of data (but may not be contained in one receive)
 		if(str[strlen(str)-1] == 0x0a) {
 			if(*str == ':') {
-				// ':'だけは接続維持用
+				// Only ':' is for keep-alive
 				free(str);
 				*json = NULL;
 			} else {
@@ -105,7 +106,7 @@ static size_t streaming_callback(void* ptr, size_t size, size_t nmemb, void* dat
 	return realsize;
 }
 
-// ストリーミングでの通知受信処理,stream_event_handlerへ代入
+// Streaming notification receipt processing, assigned to stream_event_handler
 static void stream_event_notify(sjson_node *jobj_from_string)
 {
 	struct sjson_node *notify_type, *screen_name, *display_name, *status;
@@ -123,7 +124,7 @@ static void stream_event_notify(sjson_node *jobj_from_string)
 
 	ninitbuf(&sb);
 
-	// 通知種別を表示に流用するので先頭を大文字化
+	// Using notification type for display, so capitalize first letter
 	char *t = strdup(notify_type->string_);
 	t[0] = toupper((int)(unsigned char)t[0]);
 
@@ -485,7 +486,7 @@ static void streaming_received(void)
 }
 
 // ストリーミング受信スレッド
-static void *stream_thread_func(void *param)
+void *stream_thread_func(void *param)
 {
 	get_timeline();
 
@@ -534,7 +535,7 @@ static void *stream_thread_func(void *param)
 	return NULL;
 }
 
-static void *prompt_thread_func(void *param)
+void *prompt_thread_func(void *param)
 {
 	while(1) {
 		if(prompt_notify == 0) {
@@ -553,7 +554,7 @@ static void *prompt_thread_func(void *param)
 }
 
 // インスタンスにクライアントを登録する
-static void do_create_client(char *domain, char *dot_ckcs)
+void do_create_client(char *domain, char *dot_ckcs)
 {
 	CURLcode ret;
 	CURL *hnd;
@@ -606,7 +607,7 @@ static void do_create_client(char *domain, char *dot_ckcs)
 }
 
 // 承認コードを使ったOAuth処理
-static void do_oauth(char *code, char *ck, char *cs)
+void do_oauth(char *code, char *ck, char *cs)
 {
 	char fields[512];
 	sprintf(fields, "client_id=%s&client_secret=%s&grant_type=authorization_code&code=%s&scope=read%%20write%%20follow", ck, cs, code);
@@ -664,7 +665,7 @@ static void do_oauth(char *code, char *ck, char *cs)
 }
 
 // Tootを行う
-static void do_toot(char *s)
+void do_toot(char *s)
 {
 	CURLcode ret;
 	CURL *hnd;
@@ -754,7 +755,7 @@ static size_t htl_callback(void* ptr, size_t size, size_t nmemb, void* data) {
 }
 
 // Timelineの受信
-static void get_timeline(void)
+void get_timeline(void)
 {
 	CURLcode ret;
 	CURL *hnd;
@@ -820,249 +821,4 @@ static void get_timeline(void)
 	free(uri);
 	curl_slist_free_all(slist1);
 	slist1 = NULL;
-}
-
-// メイン関数
-int main(int argc, char *argv[])
-{
-	config.profile_name[0] = 0;
-
-	// オプション解析
-	for(int i=1;i<argc;i++) {
-		if(!strcmp(argv[i],"-mono")) {
-			monoflag = 1;
-			printf("Monochrome mode.\n");
-		} else if(!strcmp(argv[i],"-unlock")) {
-			hidlckflag = 0;
-			printf("Show DIRECT and PRIVATE.\n");
-		} else if(!strcmp(argv[i],"-noemoji")) {
-			noemojiflag = 1;
-			printf("Hide UI emojis.\n");
-		} else if(!strncmp(argv[i],"-profile",8)) {
-			i++;
-			if(i >= argc) {
-				fprintf(stderr,"too few argments\n");
-				return -1;
-			} else {
-				strcpy(config.profile_name,argv[i]);
-				printf("Using profile: %s\n", config.profile_name);
-			}
-		} else if(!strncmp(argv[i],"-tllimit",8)) {
-			i++;
-			if(i >= argc) {
-				fprintf(stderr,"too few argments\n");
-				return -1;
-			} else {
-				limit_timeline = atoi(argv[i]);
-				if(limit_timeline < 0) limit_timeline = 0;
-				if(limit_timeline > 40) limit_timeline = 40;
-				printf("Timeline limit: %d\n", limit_timeline);
-			}
-		} else if(!strncmp(argv[i],"-timeline",9)) {
-			i++;
-			if(i >= argc) {
-				fprintf(stderr,"too few argments\n");
-				return -1;
-			} else {
-				if(!strcmp(argv[i],"home")) {
-
-				} else if(!strcmp(argv[i],"local")) {
-					selected_stream = "public/local";
-					selected_timeline = "public?local=true";
-				} else if(!strcmp(argv[i],"public")) {
-					selected_stream = "public";
-					selected_timeline = "public?local=false";
-				} else {
-					fprintf(stderr,"Unknown timeline %s\n", argv[i]);
-					return -1;
-				}
-
-				printf("Using timeline: %s\n", selected_stream);
-			}
-		} else {
-			fprintf(stderr,"Unknown Option %s\n", argv[i]);
-		}
-	}
-
-	nano_config_init(&config);
-
-	char *env_lang = getenv("LANG");
-	int msg_lang = 0;
-
-	if(env_lang && !strcmp(env_lang,"ja_JP.UTF-8")) msg_lang = 1;
-
-	// トークンファイルオープン
-	FILE *fp = fopen(config.dot_token, "rb");
-	if(fp) {
-		// 存在すれば読み込む
-		fclose(fp);
-		struct sjson_context *ctx;
-		char *json;
-		struct sjson_node *token;
-		struct sjson_node *jobj_from_file = read_json_from_file(config.dot_token, &json, &ctx);
-		read_json_fom_path(jobj_from_file, "access_token", &token);
-		sprintf(access_token, "Authorization: Bearer %s", token->string_);
-		FILE *f2 = fopen(config.dot_domain, "rb");
-		fscanf(f2, "%255s", domain_string);
-		fclose(f2);
-		sjson_destroy_context(ctx);
-		free(json);
-	} else {
-		// ない場合は登録処理へ
-		char domain[256];
-		char *ck;
-		char *cs;
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_WELCOME]);
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_WEL_FIRST]);
-retry1:
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_INPUT_DOMAIN]);
-		printf(">");
-		scanf("%255s", domain);
-		printf("\n");
-
-		// ドメイン名を保存する
-		FILE *f2 = fopen(config.dot_domain, "wb");
-		fprintf(f2, "%s", domain);
-		fclose(f2);
-
-		char dot_ckcs[256];
-		if (nano_config_app_token_filename(&config, domain, dot_ckcs, sizeof(dot_ckcs)) >= sizeof(dot_ckcs)) {
-			fprintf(stderr, "FATAL: Can't allocate memory. Too long filename.\n");
-			exit(EXIT_FAILURE);
-		}
-
-		char json_name[256];
-		strcpy(json_name, dot_ckcs);
-		strcpy(domain_string, domain);
-
-		// クライアントキーファイルをオープン
-		FILE *ckcs = fopen(json_name, "rb");
-		if(!ckcs) {
-			// なければ作る
-			do_create_client(domain, dot_ckcs);
-		} else {
-			// あったら閉じる
-			fclose(ckcs);
-		}
-
-		// クライアントキーファイルを読む
-		struct sjson_context *ctx;
-		char *json;
-		struct sjson_node *cko, *cso;
-		struct sjson_node *jobj_from_file = read_json_from_file(json_name, &json, &ctx);
-		int r1 = read_json_fom_path(jobj_from_file, "client_id", &cko);
-		int r2 = read_json_fom_path(jobj_from_file, "client_secret", &cso);
-		if(!r1 || !r2) {
-			// もしおかしければ最初まで戻る
-			printf("%s", nano_msg_list[msg_lang][NANO_MSG_SOME_WRONG_DOMAIN]);
-			remove(json_name);
-			remove(config.dot_domain);
-			goto retry1;
-		}
-		ck = strdup(cko->string_);
-		cs = strdup(cso->string_);
-
-		sjson_destroy_context(ctx);
-		free(json);
-
-		char code[256];
-
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_AUTHCATION]);
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_OAUTH_URL]);
-
-		// 認証用URLを表示、コードを入力させる
-		printf("https://%s/oauth/authorize?client_id=%s&response_type=code&redirect_uri=urn:ietf:wg:oauth:2.0:oob&scope=read%%20write%%20follow\n", domain, ck);
-		printf(">");
-		scanf("%255s", code);
-		printf("\n");
-
-		// 改行読み飛ばし
-		getchar();
-
-		// 承認コードで認証
-		do_oauth(code, ck, cs);
-		free(ck);
-		free(cs);
-
-		// トークンファイルを読む
-		struct sjson_node *token;
-		jobj_from_file = read_json_from_file(config.dot_token, &json, &ctx);
-		int r3 = read_json_fom_path(jobj_from_file, "access_token", &token);
-		if(!r3) {
-			// もしおかしければ最初まで戻る
-			printf("%s", nano_msg_list[msg_lang][NANO_MSG_SOME_WRONG_OAUTH]);
-			remove(json_name);
-			remove(config.dot_domain);
-			remove(config.dot_token);
-			goto retry1;
-		}
-
-		// httpヘッダに添付する用の形式でコピーしておく
-		sprintf(access_token, "Authorization: Bearer %s", token->string_);
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_FINISH]);
-
-		sjson_destroy_context(ctx);
-		free(json);
-	}
-
-	setlocale(LC_ALL, "");
-
-	pthread_mutex_init(&prompt_mutex, NULL);
-	squeue_init();
-#ifdef USE_SIXEL
-	sixel_init();
-#endif
-
-	pthread_t stream_thread;
-	pthread_t prompt_thread;
-
-	// ストリーミングスレッド生成
-	pthread_create(&stream_thread, NULL, stream_thread_func, NULL);
-	pthread_create(&prompt_thread, NULL, prompt_thread_func, NULL);
-
-	while (1)
-	{
-		sbctx_t sb;
-		// queueに来ていたら表示する
-		if(!squeue_dequeue(&sb)) {
-			fwrite(sb.buf, sb.bufptr, 1, stdout);
-			free(sb.buf);
-		}
-
-		// プロンプト通知が来てたらtoot処理
-		if(prompt_notify != 0) {
-			fputs("> ", stdout);
-			char status[1024];
-			fgets(status, 1024, stdin);
-
-			char status2[1024];
-			char *p1 = status, *p2 = status2;
-
-			for(;*p1 != 0; p1++, p2++) {
-				if(*p1 == '\\') {
-					if(p1[1] == '\\') {
-						*p2 = '\\';
-						p1++;
-					}
-					if(p1[1] == 'n') {
-						*p2 = '\n';
-						p1++;
-					}
-				} else {
-					*p2 = *p1;
-				}
-			}
-
-			*p2 = 0;
-
-			do_toot(status2);
-			prompt_notify = 0;
-		} else {
-			// あまり短いと謎マシンが死ぬので100ms
-			const struct timespec req = {0, 100 * 1000000};
-			nanosleep(&req, NULL);
-		}
-	}
-
-	return 0;
 }
