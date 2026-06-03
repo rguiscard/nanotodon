@@ -116,9 +116,10 @@ public:
 			free(item.data);
 			
 			if (err == B_OK) {
-				const char *raw = msg.FindString("raw");
-				if (raw) {
-					fTextView->Insert(raw, strlen(raw), NULL);
+				const char *content = msg.FindString("content");
+				if (content) {
+					fTextView->Insert(content, strlen(content), NULL);
+					fTextView->Insert("\n\n", 2, NULL);
 					fTextView->ScrollToSelection();
 				}
 			}
