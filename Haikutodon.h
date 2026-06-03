@@ -9,7 +9,6 @@ extern "C" {
 #include "config.h"
 #include <stdint.h>
 #include "sjson.h"
-#include "sbuf.h"
 #include "squeue.h"
 #include "messages.h"
 #include <locale.h>
