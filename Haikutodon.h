@@ -18,6 +18,7 @@ extern "C" {
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 #include "utils.h"
 
 // Expose variables from nanotodon.c that are needed by main
@@ -31,6 +32,10 @@ extern char append_timeline[64];
 extern int limit_timeline;
 extern pthread_mutex_t prompt_mutex;
 
+// Stream event handler function pointer (set by streaming_received, called on data events)
+extern void (*stream_event_handler)(struct sjson_node *);
+extern char *streaming_json;
+
 // Expose functions from nanotodon.c
 void *stream_thread_func(void *param);
 void *prompt_thread_func(void *param);
@@ -38,6 +43,10 @@ void get_timeline(void);
 void do_toot(char *s);
 void do_create_client(char *domain, char *dot_ckcs);
 void do_oauth(char *code, char *ck, char *cs);
+
+// Stream event handlers - implemented in Haikutodon.cpp
+void stream_event_update(struct sjson_node *);
+void stream_event_notify(struct sjson_node *);
 
 #ifdef __cplusplus
 }

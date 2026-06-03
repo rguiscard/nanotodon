@@ -3,9 +3,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <ctype.h>
+#include <time.h>
 #include "Haikutodon.h"
-
-#ifdef __HAIKU__
 
 #include <Application.h>
 #include <Window.h>
@@ -94,7 +94,326 @@ private:
 
 static MainWindow* gMainWindow = NULL;
 
-#endif // __HAIKU__
+void stream_event_update(struct sjson_node *jobj_from_string)
+{
+	struct sjson_node *content, *screen_name, *display_name, *reblog, *visibility;
+	const char *sname, *dname, *vstr;
+	struct sjson_node *created_at;
+	struct tm tm;
+	time_t time;
+#define DATEBUFLEN 40
+	char datebuf[DATEBUFLEN];
+	if(!jobj_from_string) return;
+
+#ifdef USE_SIXEL
+	struct sjson_node *avatar, *sensitive;
+	read_json_fom_path(jobj_from_string, "account/avatar", &avatar);
+	read_json_fom_path(jobj_from_string, "sensitive", &sensitive);
+#endif
+
+	read_json_fom_path(jobj_from_string, "content", &content);
+	read_json_fom_path(jobj_from_string, "account/acct", &screen_name);
+	read_json_fom_path(jobj_from_string, "account/display_name", &display_name);
+
+	read_json_fom_path(jobj_from_string, "reblog", &reblog);
+	read_json_fom_path(jobj_from_string, "created_at", &created_at);
+	read_json_fom_path(jobj_from_string, "visibility", &visibility);
+	memset(&tm, 0, sizeof(tm));
+	strptime(created_at->string_, "%Y-%m-%dT%H:%M:%S", &tm);
+	time = timegm(&tm);
+	strftime(datebuf, sizeof(datebuf), "%x(%a) %X", localtime(&time));
+
+	vstr = visibility->string_;
+
+	if(hidlckflag) {
+		if(!strcmp(vstr, "private") || !strcmp(vstr, "direct")) {
+			return;
+		}
+	}
+
+#ifdef USE_SIXEL
+	int fnsfw = 0;
+	fnsfw = sensitive->bool_ ? 0x100 : 0;
+#endif
+
+	sjson_tag type;
+
+	type = reblog->tag;
+	sname = screen_name->string_;
+	dname = display_name->string_;
+
+	// ブーストで回ってきた場合はその旨を表示
+	if(type != SJSON_NULL) {
+		sbctx_t sb_reb;
+		sbctx_t *sbctx_reb = &sb_reb;
+
+		ninitbuf(&sb_reb);
+
+		nattron(sbctx_reb,  COLOR_PAIR(3));
+		if(!noemojiflag) naddstr(sbctx_reb,  "🔃 ");
+		naddstr(sbctx_reb,  "Reblog by ");
+		naddstr(sbctx_reb,  sname);
+		// dname(表示名)が空の場合は括弧を表示しない
+		if (dname[0] != '\0') {
+			naddstr(sbctx_reb,  " (");
+			naddstr(sbctx_reb,  dname);
+			naddstr(sbctx_reb,  ")");
+		}
+		naddstr(sbctx_reb,  "\n");
+		nattroff(sbctx_reb,  COLOR_PAIR(3));
+
+		nflushcache(&sb_reb);
+		squeue_enqueue(sb_reb);
+
+		stream_event_update(reblog);
+		return;
+	}
+
+#ifdef USE_SIXEL
+	sbctx_t sb_avt;
+	sbctx_t *sbctx_avt = &sb_avt;
+
+	ninitbuf(&sb_avt);
+
+	print_picture(sbctx_avt, avatar->string_, SIXEL_MUL_ICO);
+
+	// アイコン右側にカーソル移動
+	move_cursor_to_avatar(sbctx_avt);
+
+	nflushcache(&sb_avt);
+	squeue_enqueue(sb_avt);
+	//naddstr(sbctx, "\n");
+#endif
+
+	sbctx_t sb;
+	sbctx_t *sbctx = &sb;
+
+	ninitbuf(&sb);
+
+	// 誰からか[ screen_name(display_name) ]を表示
+	nattron(sbctx,  COLOR_PAIR(1)|A_BOLD);
+	naddstr(sbctx,  sname);
+	nattroff(sbctx,  COLOR_PAIR(1)|A_BOLD);
+
+	// dname(表示名)が空の場合は括弧を表示しない
+	if (dname[0] != '\0') {
+		nattron(sbctx,  COLOR_PAIR(2));
+		naddstr(sbctx,  " (");
+		naddstr(sbctx,  dname);
+		naddstr(sbctx,  ")");
+		nattroff(sbctx,  COLOR_PAIR(2));
+	}
+
+	if(strcmp(vstr, "public")) {
+		nattron(sbctx,  COLOR_PAIR(3)|A_BOLD);
+		naddstr(sbctx,  " ");
+		if(noemojiflag) {
+			if(!strcmp(vstr, "unlisted")) {
+				naddstr(sbctx,  "<UNLIST>");
+			} else if(!strcmp(vstr, "private")) {
+				naddstr(sbctx,  "<PRIVATE>");
+			} else {
+				naddstr(sbctx,  "<!DIRECT!>");
+			}
+		} else {
+			if(!strcmp(vstr, "unlisted")) {
+				naddstr(sbctx,  "🔓");
+			} else if(!strcmp(vstr, "private")) {
+				naddstr(sbctx,  "🔒");
+			} else {
+				naddstr(sbctx,  "✉");
+			}
+		}
+		nattroff(sbctx,  COLOR_PAIR(3)|A_BOLD);
+	}
+
+	// 日付表示
+	naddstr(sbctx,  " - ");
+	nattron(sbctx,  COLOR_PAIR(5));
+	naddstr(sbctx,  datebuf);
+	nattroff(sbctx,  COLOR_PAIR(5));
+	naddstr(sbctx,  "\n");
+
+	const char *src = content->string_;
+
+	/*naddstr(sbctx,  src);
+	naddstr(sbctx,  "\n");*/
+
+	// タグ消去処理、2個目以降のの<p>は改行に
+	int ltgt = 0;
+	int pcount = 0;
+	while(*src) {
+		// タグならタグフラグを立てる
+		if(*src == '<') ltgt = 1;
+
+		if(ltgt && strncmp(src, "<br", 3) == 0) naddch(sbctx,  '\n');
+		if(ltgt && strncmp(src, "<p", 2) == 0) {
+			pcount++;
+			if(pcount >= 2) {
+				naddstr(sbctx,  "\n\n");
+			}
+		}
+
+		// タグフラグが立っていない(=通常文字)とき
+		if(!ltgt) {
+			// 文字実体参照の処理
+			if(*src == '&') {
+				if(strncmp(src, "&amp;", 5) == 0) {
+					naddch(sbctx,  '&');
+					src += 4;
+				}
+				else if(strncmp(src, "&lt;", 4) == 0) {
+					naddch(sbctx,  '<');
+					src += 3;
+				}
+				else if(strncmp(src, "&gt;", 4) == 0) {
+					naddch(sbctx,  '>');
+					src += 3;
+				}
+				else if(strncmp(src, "&quot;", 6) == 0) {
+					naddch(sbctx,  '"');
+					src += 5;
+				}
+				else if(strncmp(src, "&apos;", 6) == 0) {
+					naddch(sbctx,  '\'');
+					src += 5;
+				}
+				else if(strncmp(src, "&#39;", 5) == 0) {
+					naddch(sbctx,  '\'');
+					src += 4;
+				}
+			} else {
+				// 通常文字
+				naddch(sbctx,  *((unsigned char *)src));
+			}
+		}
+		if(*src == '>') ltgt = 0;
+		src++;
+	}
+
+	naddstr(sbctx,  "\n");
+
+	nflushcache(&sb);
+	squeue_enqueue(sb);
+
+	// 添付メディアのURL表示
+	struct sjson_node *media_attachments;
+
+	read_json_fom_path(jobj_from_string, "media_attachments", &media_attachments);
+
+	if(media_attachments->tag == SJSON_ARRAY) {
+		for (int i = 0; i < sjson_child_count(media_attachments); ++i) {
+			sbctx_t sb_att;
+			sbctx_t *sbctx_att = &sb_att;
+
+			ninitbuf(&sb_att);
+
+			struct sjson_node *obj = sjson_find_element(media_attachments, i);
+			struct sjson_node *url;
+			read_json_fom_path(obj, "url", &url);
+			if(url->tag == SJSON_STRING) {
+				naddstr(sbctx_att,  noemojiflag ? "<LINK>" : "🔗");
+				naddstr(sbctx_att,  url->string_);
+				naddstr(sbctx_att,  "\n");
+#ifdef USE_SIXEL
+				struct sjson_node *type;
+				read_json_fom_path(obj, "type", &type);
+				if(!strcmp(type->string_, "image")) {
+					print_picture(sbctx_att, url->string_, SIXEL_MUL_PIC | fnsfw);
+					naddstr(sbctx_att,  "\n");
+				}
+#endif
+			}
+
+			nflushcache(&sb_att);
+			squeue_enqueue(sb_att);
+		}
+	}
+
+	sbctx_t sb_end;
+	sbctx_t *sbctx_end = &sb_end;
+
+	ninitbuf(&sb_end);
+
+	// 投稿アプリ名表示
+	struct sjson_node *application_name;
+	int exist_appname = read_json_fom_path(jobj_from_string, "application/name", &application_name);
+
+	// 名前が取れたときのみ表示
+	if(exist_appname) {
+		type = application_name->tag;
+
+		if(type != SJSON_NULL) {
+			naddstr(sbctx_end,  " - ");
+
+			nattron(sbctx_end,  COLOR_PAIR(1));
+			naddstr(sbctx_end,  "via ");
+			nattroff(sbctx_end,  COLOR_PAIR(1));
+			nattron(sbctx_end,  COLOR_PAIR(2));
+			naddstr(sbctx_end,  application_name->string_);
+			naddstr(sbctx_end,  "\n");
+			nattroff(sbctx_end,  COLOR_PAIR(2));
+		}
+	}
+
+	naddstr(sbctx_end, "\n\n");
+
+	nflushcache(&sb_end);
+	squeue_enqueue(sb_end);
+}
+
+void stream_event_notify(struct sjson_node *jobj_from_string)
+{
+	struct sjson_node *notify_type, *screen_name, *display_name, *status;
+	const char *dname;
+	if(!jobj_from_string) return;
+	read_json_fom_path(jobj_from_string, "type", &notify_type);
+	read_json_fom_path(jobj_from_string, "account/acct", &screen_name);
+	read_json_fom_path(jobj_from_string, "account/display_name", &display_name);
+	int exist_status = read_json_fom_path(jobj_from_string, "status", &status);
+
+	putchar('\a');
+
+	sbctx_t sb;
+	sbctx_t *sbctx = &sb;
+
+	ninitbuf(&sb);
+
+	// Using notification type for display, so capitalize first letter
+	char *t = strdup(notify_type->string_);
+	t[0] = toupper((int)(unsigned char)t[0]);
+
+	// 通知種別と誰からか[ screen_name(display_name) ]を表示
+	nattron(sbctx, COLOR_PAIR(4));
+	if(!noemojiflag) naddstr(sbctx, strcmp(t, "Follow") == 0 ? "👥" : strcmp(t, "Favourite") == 0 ? "💕" : strcmp(t, "Reblog") == 0 ? "🔃" : strcmp(t, "Mention") == 0 ? "🗨" : "");
+	naddstr(sbctx, t);
+	free(t);
+	naddstr(sbctx, " from ");
+	naddstr(sbctx, screen_name->string_);
+
+	dname = display_name->string_;
+
+	// dname(display_name)が空の場合は括弧を表示しない
+	if (dname[0] != '\0') {
+		naddstr(sbctx, " (");
+		naddstr(sbctx, dname);
+		naddstr(sbctx, ")");
+	}
+	naddstr(sbctx, "\n");
+	nattroff(sbctx, COLOR_PAIR(4));
+
+	sjson_tag type;
+
+	type = status->tag;
+
+	nflushcache(&sb);
+	squeue_enqueue(sb);
+
+	// 通知対象のTootを表示,Follow通知だとtypeがNULLになる
+	if(type != SJSON_NULL && exist_status) {
+		stream_event_update(status);
+	}
+}
 
 int main(int argc, char *argv[])
 {
