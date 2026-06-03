@@ -10,6 +10,7 @@ extern "C" {
 #include <stdint.h>
 #include "sjson.h"
 #include "squeue.h"
+#include "sbuf.h"
 #include "messages.h"
 #include <locale.h>
 #include <pthread.h>

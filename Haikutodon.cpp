@@ -25,7 +25,7 @@ enum {
 	TOOT_MSG = 'toot'
 };
 
-// Helper to queue sbctx_t data as BMessage
+// Helper to queue sbctx_t data as BMessage (raw string as fallback)
 static void queue_sbctx(sbctx_t *sbctx)
 {
 	if (sbctx->cacheptr > 0) {
@@ -47,6 +47,17 @@ static void queue_sbctx(sbctx_t *sbctx)
 			msg.Flatten(flat_buf, flat_size);
 			squeue_enqueue_raw(flat_buf, flat_size);
 		}
+	}
+}
+
+// Helper to queue BMessage with full toot data
+static void queue_message(BMessage *msg)
+{
+	ssize_t flat_size = msg->FlattenedSize();
+	char *flat_buf = (char*)malloc(flat_size);
+	if (flat_buf) {
+		msg->Flatten(flat_buf, flat_size);
+		squeue_enqueue_raw(flat_buf, flat_size);
 	}
 }
 
@@ -101,7 +112,7 @@ public:
 		queue_item_t item;
 		while (!squeue_dequeue_raw(&item)) {
 			BMessage msg;
-			status_t err = msg.Unflatten(item.data);
+			status_t err = msg.Unflatten((const char*)item.data);
 			free(item.data);
 			
 			if (err == B_OK) {
@@ -198,7 +209,7 @@ void stream_event_update(sjson_node *jobj_from_string)
 		naddstr(sbctx_reb,  "\n");
 		nattroff(sbctx_reb,  COLOR_PAIR(3));
 
-		queue_sbctx(sbctx_reb);
+		queue_sbctx(&sb_reb);
 
 		stream_event_update(reblog);
 		return;
@@ -328,7 +339,24 @@ void stream_event_update(sjson_node *jobj_from_string)
 	naddstr(sbctx,  "\n");
 
 	nflushcache(&sb);
-	queue_sbctx(&sb);
+	
+	// Create BMessage with structured toot data
+	BMessage msg(TOOT_MSG);
+	msg.AddString("raw", sb.buf);
+	if (screen_name && screen_name->string_)
+		msg.AddString("account", screen_name->string_);
+	if (display_name && display_name->string_ && display_name->string_[0])
+		msg.AddString("display_name", display_name->string_);
+	if (content && content->string_)
+		msg.AddString("content", content->string_);
+	if (created_at && created_at->string_)
+		msg.AddString("created_at", created_at->string_);
+	if (visibility && vstr)
+		msg.AddString("visibility", vstr);
+	if (datebuf && datebuf[0])
+		msg.AddString("date", datebuf);
+	
+	queue_message(&msg);
 
 	// 添付メディアのURL表示
 	struct sjson_node *media_attachments;
@@ -391,6 +419,7 @@ void stream_event_update(sjson_node *jobj_from_string)
 
 	naddstr(sbctx_end, "\n\n");
 
+	// For media/app footer, just send the raw string (already BMessage-wrapped)
 	queue_sbctx(&sb_end);
 }
 
@@ -439,7 +468,15 @@ void stream_event_notify(struct sjson_node *jobj_from_string)
 	type = status->tag;
 
 	nflushcache(&sb);
-	queue_sbctx(&sb);
+	
+	BMessage msg(TOOT_MSG);
+	msg.AddString("raw", sb.buf);
+	msg.AddString("type", notify_type->string_);
+	if (screen_name && screen_name->string_)
+		msg.AddString("account", screen_name->string_);
+	if (display_name && display_name->string_ && display_name->string_[0])
+		msg.AddString("display_name", display_name->string_);
+	queue_message(&msg);
 
 	// 通知対象のTootを表示,Follow通知だとtypeがNULLになる
 	if(type != SJSON_NULL && exist_status) {

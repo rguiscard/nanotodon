@@ -1,4 +1,5 @@
 #include "squeue.h"
+#include "sbuf.h"
 #include <stdlib.h>
 #include <string.h>
 
