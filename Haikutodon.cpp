@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <time.h>
 #include "Haikutodon.h"
+#include "sbuf.h"
 
 #include <Application.h>
 #include <Window.h>
@@ -18,12 +19,115 @@
 #include <ScrollView.h>
 #include <MessageRunner.h>
 #include <LayoutBuilder.h>
+#include <GroupLayout.h>
+#include <StringView.h>
 #include <Button.h>
 
 // Message constant for toot data
 enum {
 	TOOT_MSG = 'toot'
 };
+
+class TootView : public BView {
+public:
+	TootView(const char* content)
+		: BView("toot_view", B_WILL_DRAW)
+	{
+		fContent = strdup(content);
+//		SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 200));
+//		SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
+		SetExplicitMinSize(BSize(10, 30));
+	}
+	
+	~TootView()
+	{
+		free(fContent);
+	}
+	
+	void Draw(BRect updateRect)
+	{
+		SetHighColor((rgb_color){0, 0, 0, 255});
+		SetLowColor((rgb_color){255, 255, 255, 255});
+		FillRect(updateRect, B_SOLID_LOW);
+		
+		font_height fh;
+		GetFontHeight(&fh);
+		float y = fh.ascent + 5;
+		MovePenTo(5, y);
+		
+		char *copy = strdup(fContent);
+		char *line = strtok(copy, "\n");
+		while (line) {
+			DrawString(line);
+			y += fh.ascent + fh.descent + 2;
+			MovePenTo(5, y);
+			line = strtok(NULL, "\n");
+		}
+		free(copy);
+	}
+	
+#if 0
+	void GetPreferredSize(float* width, float* height)
+	{
+		font_height fh;
+		GetFontHeight(&fh);
+		float lineHeight = fh.ascent + fh.descent + 2;
+		int lineCount = 1;
+		const char* p = fContent;
+		while(*p) {
+			if(*p == '\n') lineCount++;
+			p++;
+		}
+		*width = fMaxWidth;
+		*height = (fh.ascent + fh.descent) + (lineCount * lineHeight);
+	}
+#endif
+	
+private:
+	char* fContent;
+};
+
+// Helper to strip HTML entities and tags, returning clean text
+static char* strip_html(const char* src)
+{
+	if (!src) return NULL;
+	sbctx_t sb;
+	sbctx_t *sbctx = &sb;
+	ninitbuf(&sb);
+	
+	int ltgt = 0;
+	while(*src) {
+		if(*src == '<') ltgt = 1;
+		
+		if(ltgt && strncmp(src, "<br", 3) == 0) naddch(sbctx, '\n');
+		if(ltgt && strncmp(src, "<p", 2) == 0) naddstr(sbctx, "\n\n");
+		
+		if(!ltgt) {
+			if(*src == '&') {
+				if(strncmp(src, "&amp;", 5) == 0) { naddch(sbctx, '&'); src += 4; }
+				else if(strncmp(src, "&lt;", 4) == 0) { naddch(sbctx, '<'); src += 3; }
+				else if(strncmp(src, "&gt;", 4) == 0) { naddch(sbctx, '>'); src += 3; }
+				else if(strncmp(src, "&quot;", 6) == 0) { naddch(sbctx, '"'); src += 5; }
+				else if(strncmp(src, "&apos;", 6) == 0) { naddch(sbctx, '\''); src += 5; }
+				else if(strncmp(src, "&#39;", 5) == 0) { naddch(sbctx, '\''); src += 4; }
+				else { naddch(sbctx, *src); }
+			} else {
+				naddch(sbctx, *((unsigned char *)src));
+			}
+		}
+		if(*src == '>') ltgt = 0;
+		src++;
+	}
+	nflushcache(&sb);
+	
+	char* result = (char*)malloc(sb.bufptr + 1);
+	if (result) {
+		memcpy(result, sb.buf, sb.bufptr);
+		result[sb.bufptr] = '\0';
+	}
+	free(sb.buf);
+	return result;
+}
 
 // Helper to queue sbctx_t data as BMessage (raw string as fallback)
 static void queue_sbctx(sbctx_t *sbctx)
@@ -73,21 +177,44 @@ public:
 		fileMenu->AddItem(new BMenuItem("Quit", new BMessage('quit'), 'Q', B_COMMAND_KEY));
 		menuBar->AddItem(fileMenu);
 
-		fTextView = new BTextView(BRect(0, 0, 10000, 10000), "text_view", BRect(0, 0, 10000, 10000), B_FOLLOW_ALL_SIDES, B_WILL_DRAW);
-		BScrollView* scrollView = new BScrollView("scroll_view", fTextView, 0, false, true);
+		fContentView = new BView("content_view", B_WILL_DRAW);
+		fGroupLayout = new BGroupLayout(B_VERTICAL);
+		fContentView->SetLayout(fGroupLayout);
+		fContentView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 
-		fInputView = new BTextView(BRect(0, 0, 10000, 1000), "input_view", BRect(0, 0, 10000, 1000), B_FOLLOW_ALL_SIDES, B_WILL_DRAW);
+#if 0
+                fGroupLayout->AddView(new TootView("1"));
+                fGroupLayout->AddView(new TootView("2"));
+                fGroupLayout->AddView(new TootView("3"));
+                fGroupLayout->AddView(new TootView("4"));
+                fGroupLayout->AddView(new TootView("5"));
+                fGroupLayout->AddView(new TootView("6"));
+                fGroupLayout->AddView(new TootView("7"));
+#endif
+
+		fScrollView = new BScrollView("scroll_view", fContentView, 0, false, true);
+		fScrollView->SetExplicitMinSize(BSize(50, 50));
+		fScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+
+		fInputView = new BTextView("input_view", B_WILL_DRAW);
+		fInputView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 		BScrollView* inputScrollView = new BScrollView("input_scroll_view", fInputView, 0, false, true);
+		inputScrollView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 30));
+		inputScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+
+		fSplitView = BLayoutBuilder::Split<>(B_VERTICAL)
+			.Add(fScrollView, 0.7f)
+			.Add(inputScrollView, 0.3f)
+			.SetCollapsible(0, false)
+			.SetCollapsible(1, true);
+		fSplitView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 100));
+		fSplitView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 
 		fSendButton = new BButton("send_button", "Send", new BMessage('send'));
 
-		BSplitView* splitView = new BSplitView(B_VERTICAL, 0.0f);
-		splitView->AddChild(scrollView, 0.7f);
-		splitView->AddChild(inputScrollView, 0.3f);
-
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
 			.Add(menuBar)
-			.Add(splitView)
+			.Add(fSplitView)
 			.Add(fSendButton)
 			.End();
 	}
@@ -110,6 +237,8 @@ public:
 
 	void ProcessQueue(void) {
 		queue_item_t item;
+//		BGroupLayout* layout = static_cast<BGroupLayout*>(fContentView->GetLayout());
+		if (LockLooper()) {
 		while (!squeue_dequeue_raw(&item)) {
 			BMessage msg;
 			status_t err = msg.Unflatten((const char*)item.data);
@@ -118,11 +247,32 @@ public:
 			if (err == B_OK) {
 				const char *content = msg.FindString("content");
 				if (content) {
-					fTextView->Insert(content, strlen(content), NULL);
-					fTextView->Insert("\n\n", 2, NULL);
-					fTextView->ScrollToSelection();
+					TootView* tootView = new TootView(content);
+					//int32 glueIndex = fGroupLayout->CountItems() - 1;
+					//fGroupLayout->AddView(glueIndex, tootView);
+					//layout->AddView(tootView);
+					fGroupLayout->AddView(tootView);
+					//fContentView->ResizeToPreferred();
+					//fContentView->Layout(true);
+					//fScrollView->ResizeToPreferred();
+				} else {
+#if 0
+					const char *raw = msg.FindString("raw");
+					if (raw) {
+						TootView* tootView = new TootView(raw, 500.0f);
+						BGroupLayout* layout = static_cast<BGroupLayout*>(fContentView->GetLayout());
+						layout->AddView(tootView);
+						fContentView->ResizeToPreferred();
+						fContentView->Layout(false);
+						fScrollView->ResizeToPreferred();
+					}
+#endif
 				}
 			}
+		}
+		fGroupLayout->Owner()->InvalidateLayout(true);
+		fSplitView->InvalidateLayout(true);
+		UnlockLooper();
 		}
 	}
 
@@ -135,9 +285,12 @@ public:
 	}
 
 private:
-	BTextView* fTextView;
+	BView* fContentView;
+	BScrollView* fScrollView;
 	BTextView* fInputView;
 	BButton* fSendButton;
+	BSplitView* fSplitView;
+	BGroupLayout* fGroupLayout;
 };
 
 static MainWindow* gMainWindow = NULL;
@@ -662,7 +815,7 @@ int main(int argc, char *argv[])
 
     BApplication app("application/x-vnd.haikutodon");
 
-    MainWindow* window = new MainWindow(BRect(100, 100, 600, 400));
+    MainWindow* window = new MainWindow(BRect(100, 100, 600, 600));
     window->Show();
 
     bigtime_t interval = 100000;
