@@ -20,6 +20,36 @@
 #include <LayoutBuilder.h>
 #include <Button.h>
 
+// Message constant for toot data
+enum {
+	TOOT_MSG = 'toot'
+};
+
+// Helper to queue sbctx_t data as BMessage
+static void queue_sbctx(sbctx_t *sbctx)
+{
+	if (sbctx->cacheptr > 0) {
+		nflushcache(sbctx);
+	}
+	if (sbctx->buf && sbctx->bufptr > 0) {
+		BMessage msg(TOOT_MSG);
+		// Add raw string data
+		char *null_term = (char*)malloc(sbctx->bufptr + 1);
+		if (null_term) {
+			memcpy(null_term, sbctx->buf, sbctx->bufptr);
+			null_term[sbctx->bufptr] = '\0';
+			msg.AddString("raw", null_term);
+			free(null_term);
+		}
+		ssize_t flat_size = msg.FlattenedSize();
+		char *flat_buf = (char*)malloc(flat_size);
+		if (flat_buf) {
+			msg.Flatten(flat_buf, flat_size);
+			squeue_enqueue_raw(flat_buf, flat_size);
+		}
+	}
+}
+
 class MainWindow : public BWindow {
 public:
 	MainWindow(BRect frame)
@@ -68,13 +98,19 @@ public:
 	}
 
 	void ProcessQueue(void) {
-		sbctx_t sb;
-		while (!squeue_dequeue(&sb)) {
-			if (sb.buf && sb.bufptr > 0) {
-				fTextView->Insert(sb.buf, sb.bufptr, NULL);
-				fTextView->ScrollToSelection();
+		queue_item_t item;
+		while (!squeue_dequeue_raw(&item)) {
+			BMessage msg;
+			status_t err = msg.Unflatten(item.data);
+			free(item.data);
+			
+			if (err == B_OK) {
+				const char *raw = msg.FindString("raw");
+				if (raw) {
+					fTextView->Insert(raw, strlen(raw), NULL);
+					fTextView->ScrollToSelection();
+				}
 			}
-			free(sb.buf);
 		}
 	}
 
@@ -94,11 +130,11 @@ private:
 
 static MainWindow* gMainWindow = NULL;
 
-void stream_event_update(struct sjson_node *jobj_from_string)
+void stream_event_update(sjson_node *jobj_from_string)
 {
-	struct sjson_node *content, *screen_name, *display_name, *reblog, *visibility;
+	sjson_node *content, *screen_name, *display_name, *reblog, *visibility;
 	const char *sname, *dname, *vstr;
-	struct sjson_node *created_at;
+	sjson_node *created_at;
 	struct tm tm;
 	time_t time;
 #define DATEBUFLEN 40
@@ -162,8 +198,7 @@ void stream_event_update(struct sjson_node *jobj_from_string)
 		naddstr(sbctx_reb,  "\n");
 		nattroff(sbctx_reb,  COLOR_PAIR(3));
 
-		nflushcache(&sb_reb);
-		squeue_enqueue(sb_reb);
+		queue_sbctx(sbctx_reb);
 
 		stream_event_update(reblog);
 		return;
@@ -180,8 +215,7 @@ void stream_event_update(struct sjson_node *jobj_from_string)
 	// アイコン右側にカーソル移動
 	move_cursor_to_avatar(sbctx_avt);
 
-	nflushcache(&sb_avt);
-	squeue_enqueue(sb_avt);
+	queue_sbctx(&sb_avt);
 	//naddstr(sbctx, "\n");
 #endif
 
@@ -294,7 +328,7 @@ void stream_event_update(struct sjson_node *jobj_from_string)
 	naddstr(sbctx,  "\n");
 
 	nflushcache(&sb);
-	squeue_enqueue(sb);
+	queue_sbctx(&sb);
 
 	// 添付メディアのURL表示
 	struct sjson_node *media_attachments;
@@ -325,8 +359,7 @@ void stream_event_update(struct sjson_node *jobj_from_string)
 #endif
 			}
 
-			nflushcache(&sb_att);
-			squeue_enqueue(sb_att);
+			queue_sbctx(&sb_att);
 		}
 	}
 
@@ -358,8 +391,7 @@ void stream_event_update(struct sjson_node *jobj_from_string)
 
 	naddstr(sbctx_end, "\n\n");
 
-	nflushcache(&sb_end);
-	squeue_enqueue(sb_end);
+	queue_sbctx(&sb_end);
 }
 
 void stream_event_notify(struct sjson_node *jobj_from_string)
@@ -407,7 +439,7 @@ void stream_event_notify(struct sjson_node *jobj_from_string)
 	type = status->tag;
 
 	nflushcache(&sb);
-	squeue_enqueue(sb);
+	queue_sbctx(&sb);
 
 	// 通知対象のTootを表示,Follow通知だとtypeがNULLになる
 	if(type != SJSON_NULL && exist_status) {
@@ -590,7 +622,6 @@ int main(int argc, char *argv[])
     sixel_init();
 #endif
 
-#ifdef __HAIKU__
     BApplication app("application/x-vnd.haikutodon");
 
     MainWindow* window = new MainWindow(BRect(100, 100, 600, 400));
@@ -607,27 +638,4 @@ int main(int argc, char *argv[])
 
     delete runner;
     return 0;
-#else
-    pthread_t stream_thread;
-    pthread_t prompt_thread;
-
-    pthread_create(&stream_thread, NULL, stream_thread_func, NULL);
-    pthread_create(&prompt_thread, NULL, prompt_thread_func, NULL);
-
-    while (1)
-    {
-        sbctx_t sb;
-        if(!squeue_dequeue(&sb)) {
-            fwrite(sb.buf, sb.bufptr, 1, stdout);
-            free(sb.buf);
-        }
-
-        {
-            const struct timespec req = {0, 100 * 1000000};
-            nanosleep(&req, NULL);
-        }
-    }
-
-    return 0;
-#endif
 }
