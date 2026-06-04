@@ -30,7 +30,7 @@ enum {
 
 class TootView : public BView {
 public:
-	TootView(const char* content)
+	TootView(const char* content, const char* account = "@username", const char* display_name = "Display Name")
 		: BView("toot_view", B_WILL_DRAW)
 	{
 		// Row 1: Header
@@ -38,10 +38,10 @@ public:
 		avatarButton->SetExplicitMaxSize(BSize(40, 40));
 		avatarButton->SetExplicitMinSize(BSize(40, 40));
 
-		BStringView* nameView = new BStringView("name_view", "Display Name");
+		BStringView* nameView = new BStringView("name_view", display_name);
 		nameView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 		
-		BStringView* handleView = new BStringView("handle_view", "@username");
+		BStringView* handleView = new BStringView("handle_view", account);
 		handleView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 
 		BStringView* dateView = new BStringView("date_view", "Date");
@@ -261,14 +261,10 @@ public:
 			if (err == B_OK) {
 				const char *content = msg.FindString("content");
 				if (content) {
-					TootView* tootView = new TootView(content);
-					//int32 glueIndex = fGroupLayout->CountItems() - 1;
-					//fGroupLayout->AddView(glueIndex, tootView);
-					//layout->AddView(tootView);
+					const char *account = msg.FindString("account");
+					const char *display_name = msg.FindString("display_name");
+					TootView* tootView = new TootView(content, account ? account : "@username", display_name ? display_name : "Display Name");
 					fGroupLayout->AddView(tootView);
-					//fContentView->ResizeToPreferred();
-					//fContentView->Layout(true);
-					//fScrollView->ResizeToPreferred();
 				} else {
 #if 0
 					const char *raw = msg.FindString("raw");
