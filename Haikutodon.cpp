@@ -39,7 +39,10 @@ public:
 		avatarButton->SetExplicitMinSize(BSize(40, 40));
 
 		BStringView* nameView = new BStringView("name_view", "Display Name");
+		nameView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
+		
 		BStringView* handleView = new BStringView("handle_view", "@username");
+		handleView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 
 		BStringView* dateView = new BStringView("date_view", "Date");
 		dateView->SetAlignment(B_ALIGN_RIGHT);
@@ -63,7 +66,7 @@ public:
 		fContentView->SetWordWrap(true);
 		fContentView->SetViewColor(ui_color(B_PANEL_BACKGROUND_COLOR));
 		fContentView->MakeEditable(false);
-		fContentView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 80));
+		fContentView->SetExplicitMaxSize(BSize(B_SIZE_UNSET, 80));
 		fContentView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 80));
 
 		// Row 3: Actions
@@ -75,12 +78,19 @@ public:
 			.Add(new BButton("more_button", "More...", NULL))
 			.View();
 
+		// Divider line
+		BView* dividerView = new BView("divider", B_WILL_DRAW);
+		dividerView->SetViewColor(ui_color(B_SHADOW_COLOR));
+		dividerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 1));
+		dividerView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 1));
+
 		// Main layout
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
 			.Add(headerView)
 			.Add(fContentView)
 			.Add(actionsView)
-			.SetInsets(5, 5, 5, 5);
+			.Add(dividerView)
+			.SetInsets(5, 5, 5, 0);
 	}
 
 	~TootView()
@@ -198,7 +208,7 @@ public:
 
 		fScrollView = new BScrollView("scroll_view", fContentView, 0, false, true);
 		fScrollView->SetExplicitMinSize(BSize(50, 50));
-		fScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+		fScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNSET, B_SIZE_UNLIMITED));
 
 		fInputView = new BTextView("input_view", B_WILL_DRAW);
 		fInputView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
