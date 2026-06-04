@@ -5,6 +5,14 @@
 #include <pthread.h>
 #include <ctype.h>
 #include <time.h>
+#include <vector>
+#include <string>
+#include <map>
+#include <curl/curl.h>
+#include <Bitmap.h>
+#include <translation/TranslationUtils.h>
+#include <support/DataIO.h>
+#include <Messenger.h>
 #include "Haikutodon.h"
 #include "sbuf.h"
 
@@ -25,18 +33,140 @@
 
 // Message constant for toot data
 enum {
-	TOOT_MSG = 'toot'
+	TOOT_MSG = 'toot',
+	AVATAR_DOWNLOADED = 'avdl'
+};
+
+// Avatar cache
+static std::map<std::string, BBitmap*> g_avatar_cache;
+static pthread_mutex_t g_avatar_mutex = PTHREAD_MUTEX_INITIALIZER;
+static BMessenger g_main_window_messenger;
+
+// Callback for curl to write data into memory
+struct MemoryStruct {
+	char *memory;
+	size_t size;
+};
+
+static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
+	size_t realsize = size * nmemb;
+	struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+
+	char *ptr = (char *)realloc(mem->memory, mem->size + realsize + 1);
+	if(ptr == NULL) return 0;
+
+	mem->memory = ptr;
+	memcpy(&(mem->memory[mem->size]), contents, realsize);
+	mem->size += realsize;
+	mem->memory[mem->size] = 0;
+
+	return realsize;
+}
+
+// Background thread to download avatar
+static void* avatar_download_thread(void* arg) {
+	std::string* url = (std::string*)arg;
+	
+	CURL *curl_handle;
+	CURLcode res;
+	struct MemoryStruct chunk;
+
+	chunk.memory = (char *)malloc(1);
+	chunk.size = 0;
+
+	curl_handle = curl_easy_init();
+	curl_easy_setopt(curl_handle, CURLOPT_URL, url->c_str());
+	curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+	curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+	curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+	curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
+
+	res = curl_easy_perform(curl_handle);
+	curl_easy_cleanup(curl_handle);
+
+	if(res == CURLE_OK && chunk.size > 0) {
+		BMemoryIO memIO(chunk.memory, chunk.size);
+		BBitmap* bitmap = BTranslationUtils::GetBitmap(&memIO);
+		
+		if(bitmap) {
+			pthread_mutex_lock(&g_avatar_mutex);
+			g_avatar_cache[*url] = bitmap;
+			pthread_mutex_unlock(&g_avatar_mutex);
+			
+			// Notify main window to redraw
+			if (g_main_window_messenger.IsValid()) {
+				BMessage msg(AVATAR_DOWNLOADED);
+				msg.AddString("url", url->c_str());
+				g_main_window_messenger.SendMessage(&msg);
+			}
+		}
+	}
+
+	free(chunk.memory);
+	delete url;
+	return NULL;
+}
+
+static void request_avatar_download(const std::string& url) {
+	pthread_mutex_lock(&g_avatar_mutex);
+	if(g_avatar_cache.find(url) != g_avatar_cache.end() || g_avatar_cache.find(url + "_pending") != g_avatar_cache.end()) {
+		pthread_mutex_unlock(&g_avatar_mutex);
+		return; // Already cached or pending
+	}
+	g_avatar_cache[url + "_pending"] = NULL; // Mark as pending
+	pthread_mutex_unlock(&g_avatar_mutex);
+
+	pthread_t thread;
+	std::string* url_copy = new std::string(url);
+	pthread_create(&thread, NULL, avatar_download_thread, url_copy);
+	pthread_detach(thread);
+}
+
+class AvatarView : public BView {
+public:
+	AvatarView(const std::string& url)
+		: BView("avatar_view", B_WILL_DRAW), fUrl(url)
+	{
+		SetExplicitMaxSize(BSize(60, 60));
+		SetExplicitMinSize(BSize(60, 60));
+	}
+
+	void UpdateIfNeeded() {
+		// Trigger a redraw; Draw() will check the cache
+		Invalidate();
+	}
+
+	void Draw(BRect updateRect) {
+		BBitmap* cachedBitmap = NULL;
+		pthread_mutex_lock(&g_avatar_mutex);
+		auto it = g_avatar_cache.find(fUrl);
+		if (it != g_avatar_cache.end() && it->second != NULL) {
+			cachedBitmap = it->second;
+		}
+		pthread_mutex_unlock(&g_avatar_mutex);
+
+		if(cachedBitmap) {
+			// Scale the bitmap to fit the 60x60 bounds
+			DrawBitmap(cachedBitmap, cachedBitmap->Bounds(), Bounds(), B_FILTER_BITMAP_BILINEAR);
+		} else {
+			// Placeholder
+			SetHighColor(ui_color(B_PANEL_BACKGROUND_COLOR));
+			FillRect(updateRect);
+			SetHighColor(ui_color(B_SHINE_COLOR));
+			StrokeRect(updateRect);
+		}
+	}
+
+private:
+	std::string fUrl;
 };
 
 class TootView : public BView {
 public:
-	TootView(const char* content, const char* account = "@username", const char* display_name = "Display Name")
-		: BView("toot_view", B_WILL_DRAW)
+	TootView(const char* content, const char* account = "@username", const char* display_name = "Display Name", const char* avatar_url = "")
+		: BView("toot_view", B_WILL_DRAW), fAvatarUrl(avatar_url ? avatar_url : "")
 	{
-		// Row 1: Header
-		BButton* avatarButton = new BButton("avatar_button", "", NULL);
-		avatarButton->SetExplicitMaxSize(BSize(40, 40));
-		avatarButton->SetExplicitMinSize(BSize(40, 40));
+		fAvatarView = new AvatarView(fAvatarUrl);
 
 		BStringView* nameView = new BStringView("name_view", display_name);
 		nameView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
@@ -46,11 +176,11 @@ public:
 
 		BStringView* dateView = new BStringView("date_view", "Date");
 		dateView->SetAlignment(B_ALIGN_RIGHT);
-		dateView->SetExplicitMaxSize(BSize(100, 40));
-		dateView->SetExplicitMinSize(BSize(100, 40));
+		dateView->SetExplicitMaxSize(BSize(100, 60));
+		dateView->SetExplicitMinSize(BSize(100, 60));
 
 		BView* headerView = BLayoutBuilder::Group<>(B_HORIZONTAL)
-			.Add(avatarButton)
+			.Add(fAvatarView)
 			.AddGroup(B_VERTICAL)
 				.Add(nameView)
 				.Add(handleView)
@@ -91,14 +221,31 @@ public:
 			.Add(actionsView)
 			.Add(dividerView)
 			.SetInsets(5, 5, 5, 0);
+
+		// Trigger download if not already in cache
+		if (!fAvatarUrl.empty()) {
+			pthread_mutex_lock(&g_avatar_mutex);
+			bool in_cache = (g_avatar_cache.find(fAvatarUrl) != g_avatar_cache.end());
+			pthread_mutex_unlock(&g_avatar_mutex);
+			
+			if (!in_cache) {
+				request_avatar_download(fAvatarUrl);
+			}
+		}
 	}
 
-	~TootView()
-	{
+	void UpdateAvatarIfNeeded(const std::string& url) {
+		if (fAvatarUrl == url) {
+			fAvatarView->UpdateIfNeeded();
+		}
 	}
+
+	~TootView() {}
 
 private:
+	std::string fAvatarUrl;
 	BTextView* fContentView;
+	AvatarView* fAvatarView;
 };
 
 // Helper to strip HTML entities and tags, returning clean text
@@ -184,6 +331,7 @@ public:
 	MainWindow(BRect frame)
 		: BWindow(frame, "Haikutodon", B_TITLED_WINDOW, B_ASYNCHRONOUS_CONTROLS)
 	{
+		g_main_window_messenger = BMessenger(this);
 		SetFlags(Flags() | B_QUIT_ON_WINDOW_CLOSE);
 
 		BMenuBar* menuBar = new BMenuBar("menu_bar");
@@ -244,6 +392,25 @@ public:
 			case 'send':
 				PostToot();
 				break;
+			case AVATAR_DOWNLOADED: {
+				if (LockLooper()) {
+					const char* url = message->FindString("url");
+					if (url) {
+						int32 count = fGroupLayout->CountItems();
+						for (int32 i = 0; i < count; i++) {
+							BLayoutItem* item = fGroupLayout->ItemAt(i);
+							if (item && item->View()) {
+								TootView* tootView = dynamic_cast<TootView*>(item->View());
+								if (tootView) {
+									tootView->UpdateAvatarIfNeeded(url);
+								}
+							}
+						}
+					}
+					UnlockLooper();
+				}
+				break;
+			}
 			default:
 				BWindow::MessageReceived(message);
 		}
@@ -263,7 +430,8 @@ public:
 				if (content) {
 					const char *account = msg.FindString("account");
 					const char *display_name = msg.FindString("display_name");
-					TootView* tootView = new TootView(content, account ? account : "@username", display_name ? display_name : "Display Name");
+					const char *avatar_url = msg.FindString("avatar_url");
+					TootView* tootView = new TootView(content, account ? account : "@username", display_name ? display_name : "Display Name", avatar_url ? avatar_url : "");
 					fGroupLayout->AddView(tootView);
 				} else {
 #if 0
@@ -519,6 +687,11 @@ void stream_event_update(sjson_node *jobj_from_string)
 		msg.AddString("visibility", vstr);
 	if (datebuf && datebuf[0])
 		msg.AddString("date", datebuf);
+	
+	struct sjson_node *avatar;
+	read_json_fom_path(jobj_from_string, "account/avatar", &avatar);
+	if (avatar && avatar->string_)
+		msg.AddString("avatar_url", avatar->string_);
 	
 	queue_message(&msg);
 

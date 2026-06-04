@@ -30,7 +30,7 @@ CFLAGS += -DSUPPORT_XDG_BASE_DIR
 # for Haiku
 ifeq ($(shell uname -s), Haiku)
 CFLAGS += -D__HAIKU__
-LDFLAGS += -lbe -lmedia -ltracker
+LDFLAGS += -lbe -lmedia -ltracker -ltranslation
 endif
 
 # default
