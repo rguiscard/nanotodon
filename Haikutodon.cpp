@@ -201,11 +201,15 @@ public:
 
 		// Row 3: Actions
 		BView* actionsView = BLayoutBuilder::Group<>(B_HORIZONTAL)
-			.Add(new BButton("reply_button", "Reply", NULL))
-			.Add(new BButton("boost_button", "Boost", NULL))
-			.Add(new BButton("like_button", "Like", NULL))
-			.Add(new BButton("bookmark_button", "Bookmark", NULL))
-			.Add(new BButton("more_button", "More...", NULL))
+			.AddGroup(B_HORIZONTAL, 0.0f)
+				.Add(new BButton("reply_button", "Reply", NULL))
+				.Add(new BButton("boost_button", "Boost", NULL))
+				.Add(new BButton("like_button", "Like", NULL))
+				.Add(new BButton("bookmark_button", "Bookmark", NULL))
+				.Add(new BButton("more_button", "More...", NULL))
+				.SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP))
+			.End()
+			.AddGlue()
 			.View();
 
 		// Divider line
@@ -343,6 +347,7 @@ public:
 		fGroupLayout = new BGroupLayout(B_VERTICAL);
 		fContentView->SetLayout(fGroupLayout);
 		fContentView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+		fContentView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
 
 #if 0
                 fGroupLayout->AddView(new TootView("1"));
