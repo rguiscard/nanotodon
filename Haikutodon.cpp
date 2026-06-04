@@ -360,10 +360,11 @@ public:
 #endif
 
 		fScrollView = new BScrollView("scroll_view", fContentView, 0, false, true);
-		fScrollView->SetExplicitMinSize(BSize(50, 50));
-		fScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNSET, B_SIZE_UNLIMITED));
+		fScrollView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 50));
+		fScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 
 		fInputView = new BTextView("input_view", B_WILL_DRAW);
+		fInputView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
 		fInputView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 		BScrollView* inputScrollView = new BScrollView("input_scroll_view", fInputView, 0, false, true);
 		inputScrollView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 30));
@@ -374,7 +375,7 @@ public:
 			.Add(inputScrollView, 0.3f)
 			.SetCollapsible(0, false)
 			.SetCollapsible(1, true);
-		fSplitView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 100));
+		fSplitView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 50));
 		fSplitView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 
 		fSendButton = new BButton("send_button", "Send", new BMessage('send'));
