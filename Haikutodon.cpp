@@ -33,58 +33,62 @@ public:
 	TootView(const char* content)
 		: BView("toot_view", B_WILL_DRAW)
 	{
-		fContent = strdup(content);
-//		SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 200));
-//		SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
-		SetExplicitMinSize(BSize(10, 30));
+		// Row 1: Header
+		BButton* avatarButton = new BButton("avatar_button", "", NULL);
+		avatarButton->SetExplicitMaxSize(BSize(40, 40));
+		avatarButton->SetExplicitMinSize(BSize(40, 40));
+
+		BStringView* nameView = new BStringView("name_view", "Display Name");
+		BStringView* handleView = new BStringView("handle_view", "@username");
+
+		BStringView* dateView = new BStringView("date_view", "Date");
+		dateView->SetAlignment(B_ALIGN_RIGHT);
+		dateView->SetExplicitMaxSize(BSize(100, 40));
+		dateView->SetExplicitMinSize(BSize(100, 40));
+
+		BView* headerView = BLayoutBuilder::Group<>(B_HORIZONTAL)
+			.Add(avatarButton)
+			.AddGroup(B_VERTICAL)
+				.Add(nameView)
+				.Add(handleView)
+			.End()
+			.Add(dateView)
+			.View();
+		headerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 60));
+		headerView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 60));
+
+		// Row 2: Content
+		fContentView = new BTextView("content_view", B_WILL_DRAW);
+		fContentView->SetText(content ? content : "");
+		fContentView->SetWordWrap(true);
+		fContentView->SetViewColor(ui_color(B_PANEL_BACKGROUND_COLOR));
+		fContentView->MakeEditable(false);
+		fContentView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 80));
+		fContentView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 80));
+
+		// Row 3: Actions
+		BView* actionsView = BLayoutBuilder::Group<>(B_HORIZONTAL)
+			.Add(new BButton("reply_button", "Reply", NULL))
+			.Add(new BButton("boost_button", "Boost", NULL))
+			.Add(new BButton("like_button", "Like", NULL))
+			.Add(new BButton("bookmark_button", "Bookmark", NULL))
+			.Add(new BButton("more_button", "More...", NULL))
+			.View();
+
+		// Main layout
+		BLayoutBuilder::Group<>(this, B_VERTICAL)
+			.Add(headerView)
+			.Add(fContentView)
+			.Add(actionsView)
+			.SetInsets(5, 5, 5, 5);
 	}
-	
+
 	~TootView()
 	{
-		free(fContent);
 	}
-	
-	void Draw(BRect updateRect)
-	{
-		SetHighColor((rgb_color){0, 0, 0, 255});
-		SetLowColor((rgb_color){255, 255, 255, 255});
-		FillRect(updateRect, B_SOLID_LOW);
-		
-		font_height fh;
-		GetFontHeight(&fh);
-		float y = fh.ascent + 5;
-		MovePenTo(5, y);
-		
-		char *copy = strdup(fContent);
-		char *line = strtok(copy, "\n");
-		while (line) {
-			DrawString(line);
-			y += fh.ascent + fh.descent + 2;
-			MovePenTo(5, y);
-			line = strtok(NULL, "\n");
-		}
-		free(copy);
-	}
-	
-#if 0
-	void GetPreferredSize(float* width, float* height)
-	{
-		font_height fh;
-		GetFontHeight(&fh);
-		float lineHeight = fh.ascent + fh.descent + 2;
-		int lineCount = 1;
-		const char* p = fContent;
-		while(*p) {
-			if(*p == '\n') lineCount++;
-			p++;
-		}
-		*width = fMaxWidth;
-		*height = (fh.ascent + fh.descent) + (lineCount * lineHeight);
-	}
-#endif
-	
+
 private:
-	char* fContent;
+	BTextView* fContentView;
 };
 
 // Helper to strip HTML entities and tags, returning clean text
