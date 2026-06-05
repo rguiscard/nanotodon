@@ -34,7 +34,8 @@
 // Message constant for toot data
 enum {
 	TOOT_MSG = 'toot',
-	AVATAR_DOWNLOADED = 'avdl'
+	AVATAR_DOWNLOADED = 'avdl',
+	POST_WINDOW_MSG = 'post'
 };
 
 // Avatar cache
@@ -159,6 +160,49 @@ public:
 
 private:
 	std::string fUrl;
+};
+
+class PostWindow : public BWindow {
+public:
+	PostWindow(BRect frame)
+		: BWindow(frame, "Post", B_TITLED_WINDOW, B_ASYNCHRONOUS_CONTROLS)
+	{
+		BTextView* inputView = new BTextView("post_input", B_WILL_DRAW);
+		inputView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
+		inputView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+		BScrollView* scroll = new BScrollView("post_scroll", inputView, 0, false, true);
+
+		BButton* sendButton = new BButton("send_button", "Send", new BMessage('send'));
+
+		BLayoutBuilder::Group<>(this, B_VERTICAL)
+			.Add(scroll)
+			.Add(sendButton)
+			.End();
+	}
+
+	virtual void MessageReceived(BMessage* message) {
+		switch (message->what) {
+			case 'send': {
+				BView* child = FindView("post_input");
+				BTextView* inputView = child ? dynamic_cast<BTextView*>(child) : NULL;
+				if (inputView) {
+					const char* text = inputView->Text();
+					if (text && *text) {
+						do_toot(const_cast<char*>(text));
+						inputView->SetText("");
+					}
+				}
+				break;
+			}
+			default:
+				BWindow::MessageReceived(message);
+		}
+	}
+
+	virtual bool QuitRequested(void) {
+		// Close window but don't quit the app
+		return true;
+	}
 };
 
 class TootView : public BView {
@@ -340,6 +384,7 @@ public:
 
 		BMenuBar* menuBar = new BMenuBar("menu_bar");
 		BMenu* fileMenu = new BMenu("File");
+		fileMenu->AddItem(new BMenuItem("Post", new BMessage(POST_WINDOW_MSG), 'P', B_COMMAND_KEY));
 		fileMenu->AddItem(new BMenuItem("Quit", new BMessage('quit'), 'Q', B_COMMAND_KEY));
 		menuBar->AddItem(fileMenu);
 
@@ -391,6 +436,9 @@ public:
 		switch (message->what) {
 			case 'quit':
 				be_app->PostMessage(B_QUIT_REQUESTED);
+				break;
+			case POST_WINDOW_MSG:
+				(new PostWindow(BRect(200, 200, 500, 500)))->Show();
 				break;
 			case 'poll':
 				ProcessQueue();
