@@ -406,8 +406,9 @@ public:
 
 		fScrollView = new BScrollView("scroll_view", fContentView, 0, false, true);
 		fScrollView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 50));
-		fScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+//		fScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 
+#if 0
 		fInputView = new BTextView("input_view", B_WILL_DRAW);
 		fInputView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
 		fInputView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
@@ -422,14 +423,15 @@ public:
 			.SetCollapsible(1, true);
 		fSplitView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 50));
 		fSplitView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+#endif
 
-		fSendButton = new BButton("send_button", "Send", new BMessage('send'));
+//		fSendButton = new BButton("send_button", "Send", new BMessage('send'));
 
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
 			.Add(menuBar)
-			.Add(fSplitView)
-			.Add(fSendButton)
+			.Add(fScrollView)
 			.End();
+//			.Add(fSendButton)
 	}
 
 	virtual void MessageReceived(BMessage* message) {
@@ -443,9 +445,11 @@ public:
 			case 'poll':
 				ProcessQueue();
 				break;
+#if 0
 			case 'send':
 				PostToot();
 				break;
+#endif
 			case AVATAR_DOWNLOADED: {
 				if (LockLooper()) {
 					const char* url = message->FindString("url");
@@ -503,11 +507,13 @@ public:
 			}
 		}
 		fGroupLayout->Owner()->InvalidateLayout(true);
-		fSplitView->InvalidateLayout(true);
+		fScrollView->InvalidateLayout(true);
+//		fSplitView->InvalidateLayout(true);
 		UnlockLooper();
 		}
 	}
 
+#if 0
 	void PostToot(void) {
 		const char* text = fInputView->Text();
 		if (text && *text) {
@@ -515,6 +521,7 @@ public:
 			fInputView->SetText("");
 		}
 	}
+#endif
 
 private:
 	BView* fContentView;
