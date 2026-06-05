@@ -15,6 +15,7 @@
 #include <Messenger.h>
 #include "Haikutodon.h"
 #include "sbuf.h"
+#include "HtmlView.h"
 
 #include <Application.h>
 #include <Window.h>
@@ -234,7 +235,8 @@ public:
 		headerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 60));
 		headerView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 60));
 
-		// Row 2: Content
+#if 0
+		// Row 2: Content (original TextView)
 		fContentView = new BTextView("content_view", B_WILL_DRAW);
 		fContentView->SetText(content ? content : "");
 		fContentView->SetWordWrap(true);
@@ -242,6 +244,22 @@ public:
 		fContentView->MakeEditable(false);
 		fContentView->SetExplicitMaxSize(BSize(B_SIZE_UNSET, 80));
 		fContentView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 80));
+#endif
+		// Row 2b: HTML View (below original TextView for comparison)
+		HtmlView* htmlView = new HtmlView(BRect(0, 0, 100, 100), "html_view");
+		htmlView->RenderHtml(BString(content ? content : ""));
+		htmlView->SetExplicitMaxSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
+		htmlView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
+
+#if 0
+		// Content container with both views
+		BView* contentContainer = BLayoutBuilder::Group<>(B_VERTICAL)
+			.Add(fContentView)
+			.Add(htmlView)
+			.View();
+		contentContainer->SetExplicitMaxSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
+		contentContainer->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
+#endif
 
 		// Row 3: Actions
 		BView* actionsView = BLayoutBuilder::Group<>(B_HORIZONTAL)
@@ -265,7 +283,8 @@ public:
 		// Main layout
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
 			.Add(headerView)
-			.Add(fContentView)
+//			.Add(contentContainer)
+			.Add(htmlView)
 			.Add(actionsView)
 			.Add(dividerView)
 			.SetInsets(5, 5, 5, 0);

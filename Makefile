@@ -1,5 +1,5 @@
 TARGET = nanotodon
-OBJS = nanotodon.o sbuf.o squeue.o sixel.o utils.o config.o messages.o Haikutodon.o
+OBJS = nanotodon.o sbuf.o squeue.o sixel.o utils.o config.o messages.o HtmlView.o Haikutodon.o
 
 CC=gcc
 CXX=g++
@@ -30,7 +30,7 @@ CFLAGS += -DSUPPORT_XDG_BASE_DIR
 # for Haiku
 ifeq ($(shell uname -s), Haiku)
 CFLAGS += -D__HAIKU__
-LDFLAGS += -lbe -lmedia -ltracker -ltranslation
+LDFLAGS += -lbe -lmedia -ltracker -ltranslation -llitehtml
 endif
 
 # default
