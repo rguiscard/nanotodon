@@ -31,12 +31,14 @@
 #include <GroupLayout.h>
 #include <StringView.h>
 #include <Button.h>
+#include <iostream>
 
 // Message constant for toot data
 enum {
 	TOOT_MSG = 'toot',
 	AVATAR_DOWNLOADED = 'avdl',
-	POST_WINDOW_MSG = 'post'
+	POST_WINDOW_MSG = 'post',
+	MORE_BUTTON_MSG = 'more'
 };
 
 // Avatar cache
@@ -208,8 +210,8 @@ public:
 
 class TootView : public BView {
 public:
-	TootView(const char* content, const char* account = "@username", const char* display_name = "Display Name", const char* avatar_url = "")
-		: BView("toot_view", B_WILL_DRAW), fAvatarUrl(avatar_url ? avatar_url : "")
+	TootView(const char* content, const char* account = "@username", const char* display_name = "Display Name", const char* avatar_url = "", const char* status_id = "")
+		: BView("toot_view", B_WILL_DRAW), fAvatarUrl(avatar_url ? avatar_url : ""), fStatusId(status_id ? status_id : "")
 	{
 		fAvatarView = new AvatarView(fAvatarUrl);
 
@@ -266,13 +268,16 @@ public:
 #endif
 
 		// Row 3: Actions
+		BMessage *msg = new BMessage(MORE_BUTTON_MSG);
+		msg->AddString("id", fStatusId.c_str());
+
 		BView* actionsView = BLayoutBuilder::Group<>(B_HORIZONTAL)
 			.AddGroup(B_HORIZONTAL, 0.0f)
 				.Add(new BButton("reply_button", "Reply", NULL))
 				.Add(new BButton("boost_button", "Boost", NULL))
 				.Add(new BButton("like_button", "Like", NULL))
 				.Add(new BButton("bookmark_button", "Bookmark", NULL))
-				.Add(new BButton("more_button", "More...", NULL))
+				.Add(new BButton("more_button", "More...", msg))
 				.SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP))
 			.End()
 			.AddGlue()
@@ -307,7 +312,7 @@ public:
 		}
 	}
 
-	void UpdateAvatarIfNeeded(const std::string& url) {
+ 	void UpdateAvatarIfNeeded(const std::string& url) {
 		if (fAvatarUrl == url) {
 			fAvatarView->UpdateIfNeeded();
 		}
@@ -317,6 +322,7 @@ public:
 
 private:
 	std::string fAvatarUrl;
+	std::string fStatusId;
 	BTextView* fContentView;
 	AvatarView* fAvatarView;
 };
@@ -452,11 +458,14 @@ public:
 			case 'poll':
 				ProcessQueue();
 				break;
-#if 0
-			case 'send':
-				PostToot();
+			case MORE_BUTTON_MSG: {
+				const char* statusId = message->FindString("id");
+				std::cout << "MORE_BUTTON_MSG" << std::endl;
+				if (statusId) {
+					OnMoreClicked(std::string(statusId));
+				}
 				break;
-#endif
+			}
 			case AVATAR_DOWNLOADED: {
 				if (LockLooper()) {
 					const char* url = message->FindString("url");
@@ -496,7 +505,8 @@ public:
 					const char *account = msg.FindString("account");
 					const char *display_name = msg.FindString("display_name");
 					const char *avatar_url = msg.FindString("avatar_url");
-					TootView* tootView = new TootView(content, account ? account : "@username", display_name ? display_name : "Display Name", avatar_url ? avatar_url : "");
+					const char *status_id = msg.FindString("id");
+					TootView* tootView = new TootView(content, account ? account : "@username", display_name ? display_name : "Display Name", avatar_url ? avatar_url : "", status_id ? status_id : "");
 					fGroupLayout->AddView(tootView);
 					fContentView->InvalidateLayout(true);
 				} else {
@@ -521,15 +531,7 @@ public:
 		}
 	}
 
-#if 0
-	void PostToot(void) {
-		const char* text = fInputView->Text();
-		if (text && *text) {
-			do_toot(const_cast<char*>(text));
-			fInputView->SetText("");
-		}
-	}
-#endif
+	void OnMoreClicked(const std::string& statusId);
 
 private:
 	BView* fContentView;
@@ -538,6 +540,10 @@ private:
 	BSplitView* fSplitView;
 	BGroupLayout* fGroupLayout;
 };
+
+void MainWindow::OnMoreClicked(const std::string& statusId) {
+	std::cout << statusId << std::endl;
+}
 
 static MainWindow* gMainWindow = NULL;
 
@@ -760,6 +766,11 @@ void stream_event_update(sjson_node *jobj_from_string)
 	read_json_fom_path(jobj_from_string, "account/avatar", &avatar);
 	if (avatar && avatar->string_)
 		msg.AddString("avatar_url", avatar->string_);
+	
+	struct sjson_node *id;
+	read_json_fom_path(jobj_from_string, "id", &id);
+	if (id && id->string_)
+		msg.AddString("id", id->string_);
 	
 	queue_message(&msg);
 
