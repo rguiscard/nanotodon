@@ -289,10 +289,40 @@ public:
 
 class TootView : public BView {
 public:
+#if 0
 	TootView(const char* content, const char* account = "@username", const char* display_name = "Display Name", const char* avatar_url = "", const char* status_id = "")
-		: BView("toot_view", B_WILL_DRAW), fAvatarUrl(avatar_url ? avatar_url : ""), fStatusId(status_id ? status_id : "")
+		: BView("toot_view", B_WILL_DRAW)
 	{
-		fAvatarView = new AvatarView(fAvatarUrl);
+		BuildUI(content, account, display_name, avatar_url, status_id);
+	}
+#endif
+	TootView()
+		: BView("toot_view", B_WILL_DRAW)
+	{
+	}
+
+	void SetToot(BMessage* msg) {
+		const char* content = msg->FindString("content");
+		const char* account = msg->FindString("account");
+		const char* display_name = msg->FindString("display_name");
+		const char* avatar_url = msg->FindString("avatar_url");
+		const char* status_id = msg->FindString("id");
+		BuildUI(content, account, display_name, avatar_url, status_id);
+	}
+
+	void UpdateAvatarIfNeeded(const std::string& url) {
+		if (fAvatarUrl == url) {
+			fAvatarView->UpdateIfNeeded();
+		}
+	}
+
+	~TootView() {}
+
+private:
+	void BuildUI(const char* content, const char* account, const char* display_name, const char* avatar_url, const char* status_id) {
+		fAvatarView = new AvatarView(avatar_url ? avatar_url : "");
+		fAvatarUrl = avatar_url ? avatar_url : "";
+		fStatusId = status_id ? status_id : "";
 
 		BStringView* nameView = new BStringView("name_view", display_name);
 		nameView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
@@ -317,7 +347,6 @@ public:
 		headerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 70));
 
 #if 0
-		// Row 2: Content (original TextView)
 		fContentView = new BTextView("content_view", B_WILL_DRAW);
 		fContentView->SetText(content ? content : "");
 		fContentView->SetWordWrap(true);
@@ -326,27 +355,13 @@ public:
 		fContentView->SetExplicitMaxSize(BSize(B_SIZE_UNSET, 80));
 		fContentView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 80));
 #endif
-		// Row 2b: HTML View (below original TextView for comparison)
 		HtmlView* htmlView = new HtmlView(BRect(0, 0, 100, 100), "html_view");
 		htmlView->RenderHtml(BString(content ? content : ""));
-		// For some reason, height of MinSize determine the total height of GroupLayout.
-		// Thus, this number cannot be too small.
 		htmlView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 100));
 		htmlView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 250));
 		htmlView->SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP));
 		htmlView->SetMaxBytes(125);
 
-#if 0
-		// Content container with both views
-		BView* contentContainer = BLayoutBuilder::Group<>(B_VERTICAL)
-			.Add(fContentView)
-			.Add(htmlView)
-			.View();
-		contentContainer->SetExplicitMaxSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
-		contentContainer->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
-#endif
-
-		// Row 3: Actions
 		BMessage *msg = new BMessage(MORE_BUTTON_MSG);
 		msg->AddString("id", fStatusId.c_str());
 
@@ -364,22 +379,18 @@ public:
 		actionsView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 40));
 		actionsView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 40));
 
-		// Divider line
 		BView* dividerView = new BView("divider", B_WILL_DRAW);
 		dividerView->SetViewColor(ui_color(B_SHADOW_COLOR));
 		dividerView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 1));
 		dividerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 1));
 
-		// Main layout
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
 			.Add(headerView)
-//			.Add(contentContainer)
 			.Add(htmlView)
 			.Add(actionsView)
 			.Add(dividerView)
 			.SetInsets(5, 5, 5, 0);
 
-		// Trigger download if not already in cache
 		if (!fAvatarUrl.empty()) {
 			pthread_mutex_lock(&g_avatar_mutex);
 			bool in_cache = (g_avatar_cache.find(fAvatarUrl) != g_avatar_cache.end());
@@ -391,15 +402,6 @@ public:
 		}
 	}
 
- 	void UpdateAvatarIfNeeded(const std::string& url) {
-		if (fAvatarUrl == url) {
-			fAvatarView->UpdateIfNeeded();
-		}
-	}
-
-	~TootView() {}
-
-private:
 	std::string fAvatarUrl;
 	std::string fStatusId;
 	BTextView* fContentView;
@@ -568,20 +570,8 @@ public:
 			case DETAIL_MSG: {
 				if (LockLooper()) {
 					BGroupLayout *layout = dynamic_cast<BGroupLayout*>(fDetailsView->GetLayout());
-#if 0
-					if (layout) {
-						while (layout->CountItems() > 0) {
-							BLayoutItem *item = layout->RemoveItem((int32)0);
-							delete item;
-						}
-					}
-#endif
-					const char *content = message->FindString("content");
-					const char *account = message->FindString("account");
-					const char *display_name = message->FindString("display_name");
-					const char *avatar_url = message->FindString("avatar_url");
-					const char *status_id = message->FindString("id");
-					TootView* tootView = new TootView(content, account ? account : "@username", display_name ? display_name : "Display Name", avatar_url ? avatar_url : "", status_id ? status_id : "");
+					TootView* tootView = new TootView();
+					tootView->SetToot(message);
 					layout->AddView(tootView);
 					fDetailsView->InvalidateLayout(true);
 					UnlockLooper();
@@ -595,7 +585,6 @@ public:
 
 	void ProcessQueue(void) {
 		queue_item_t item;
-//		BGroupLayout* layout = static_cast<BGroupLayout*>(fContentView->GetLayout());
 		if (LockLooper()) {
 		while (!squeue_dequeue_raw(&item)) {
 			BMessage msg;
@@ -605,11 +594,8 @@ public:
 			if (err == B_OK) {
 				const char *content = msg.FindString("content");
 				if (content) {
-					const char *account = msg.FindString("account");
-					const char *display_name = msg.FindString("display_name");
-					const char *avatar_url = msg.FindString("avatar_url");
-					const char *status_id = msg.FindString("id");
-					TootView* tootView = new TootView(content, account ? account : "@username", display_name ? display_name : "Display Name", avatar_url ? avatar_url : "", status_id ? status_id : "");
+					TootView* tootView = new TootView();
+					tootView->SetToot(&msg);
 					fGroupLayout->AddView(tootView);
 					fContentView->InvalidateLayout(true);
 				} else {
@@ -627,9 +613,6 @@ public:
 				}
 			}
 		}
-//		fGroupLayout->Owner()->InvalidateLayout(true);
-//		fScrollView->InvalidateLayout(true);
-//		fSplitView->InvalidateLayout(true);
 		UnlockLooper();
 		}
 	}
