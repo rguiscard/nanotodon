@@ -422,10 +422,23 @@ public:
 		fScrollView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 50));
 		fScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 
+		fDetailsView = new BView("content_view", B_WILL_DRAW);
+		fDetailsView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+		fDetailsView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
+
+		BLayoutBuilder::Group<>(this, B_VERTICAL)
+			.Add(menuBar)
+			.AddGroup(B_HORIZONTAL, 0.0f)
+				.Add(fScrollView)
+				.Add(fDetailsView)
+				.End()
+			.End();
+#if 0
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
 			.Add(menuBar)
 			.Add(fScrollView)
 			.End();
+#endif
 	}
 
 	virtual void MessageReceived(BMessage* message) {
@@ -521,8 +534,7 @@ public:
 private:
 	BView* fContentView;
 	BScrollView* fScrollView;
-	BTextView* fInputView;
-	BButton* fSendButton;
+	BView* fDetailsView;
 	BSplitView* fSplitView;
 	BGroupLayout* fGroupLayout;
 };
