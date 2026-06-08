@@ -38,7 +38,8 @@ enum {
 	TOOT_MSG = 'toot',
 	AVATAR_DOWNLOADED = 'avdl',
 	POST_WINDOW_MSG = 'post',
-	MORE_BUTTON_MSG = 'more'
+	MORE_BUTTON_MSG = 'more',
+	DETAIL_MSG = 'detl'
 };
 
 // Avatar cache
@@ -124,6 +125,84 @@ static void request_avatar_download(const std::string& url) {
 	std::string* url_copy = new std::string(url);
 	pthread_create(&thread, NULL, avatar_download_thread, url_copy);
 	pthread_detach(thread);
+}
+
+static void* fetch_status_thread(void* arg) {
+	std::string* statusId = (std::string*)arg;
+	
+	CURL *curl_handle;
+	CURLcode res;
+	struct MemoryStruct chunk;
+	
+	chunk.memory = (char *)malloc(1);
+	chunk.size = 0;
+	
+	std::string url = "https://" + std::string(domain_string) + "/api/v1/statuses/" + *statusId;
+	struct curl_slist *slist1 = NULL;
+	slist1 = curl_slist_append(slist1, access_token);
+	
+	curl_handle = curl_easy_init();
+	curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
+	curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+	curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+	curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+	curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, slist1);
+	curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPALIVE, 1L);
+	
+	res = curl_easy_perform(curl_handle);
+	curl_easy_cleanup(curl_handle);
+	curl_slist_free_all(slist1);
+	
+	if(res == CURLE_OK && chunk.size > 0) {
+		sjson_context* ctx = sjson_create_context(0, 0, NULL);
+		struct sjson_node *jobj = sjson_decode(ctx, chunk.memory);
+		
+		if(jobj) {
+			sjson_node *content, *screen_name, *display_name, *created_at, *visibility, *id;
+			const char *account = NULL, *dname = NULL, *vstr = NULL, *status_id = NULL;
+			struct tm tm;
+			time_t time;
+			char datebuf[40];
+			
+			read_json_fom_path(jobj, "content", &content);
+			read_json_fom_path(jobj, "account/acct", &screen_name);
+			read_json_fom_path(jobj, "account/display_name", &display_name);
+			read_json_fom_path(jobj, "created_at", &created_at);
+			read_json_fom_path(jobj, "visibility", &visibility);
+			read_json_fom_path(jobj, "id", &id);
+			
+			if(screen_name && screen_name->string_) account = screen_name->string_;
+			if(display_name && display_name->string_) dname = display_name->string_;
+			if(visibility && visibility->string_) vstr = visibility->string_;
+			if(id && id->string_) status_id = id->string_;
+			if(created_at && created_at->string_) {
+				memset(&tm, 0, sizeof(tm));
+				strptime(created_at->string_, "%Y-%m-%dT%H:%M:%S", &tm);
+				time = timegm(&tm);
+				strftime(datebuf, sizeof(datebuf), "%x(%a) %X", localtime(&time));
+			}
+			
+			BMessage msg(DETAIL_MSG);
+			if(content && content->string_) msg.AddString("content", content->string_);
+			if(screen_name && screen_name->string_) msg.AddString("account", screen_name->string_);
+			if(display_name && display_name->string_ && display_name->string_[0])
+				msg.AddString("display_name", display_name->string_);
+			if(status_id) msg.AddString("id", status_id);
+			if(datebuf[0]) msg.AddString("date", datebuf);
+			if(vstr) msg.AddString("visibility", vstr);
+			
+			if(g_main_window_messenger.IsValid()) {
+				g_main_window_messenger.SendMessage(&msg);
+			}
+			
+			sjson_destroy_context(ctx);
+		}
+	}
+	
+	free(chunk.memory);
+	delete statusId;
+	return NULL;
 }
 
 class AvatarView : public BView {
@@ -429,6 +508,7 @@ public:
 		fScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 
 		fDetailsView = new BView("content_view", B_WILL_DRAW);
+		fDetailsView->SetLayout(new BGroupLayout(B_VERTICAL));
 		fDetailsView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 		fDetailsView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
 
@@ -481,6 +561,29 @@ public:
 							}
 						}
 					}
+					UnlockLooper();
+				}
+				break;
+			}
+			case DETAIL_MSG: {
+				if (LockLooper()) {
+					BGroupLayout *layout = dynamic_cast<BGroupLayout*>(fDetailsView->GetLayout());
+#if 0
+					if (layout) {
+						while (layout->CountItems() > 0) {
+							BLayoutItem *item = layout->RemoveItem((int32)0);
+							delete item;
+						}
+					}
+#endif
+					const char *content = message->FindString("content");
+					const char *account = message->FindString("account");
+					const char *display_name = message->FindString("display_name");
+					const char *avatar_url = message->FindString("avatar_url");
+					const char *status_id = message->FindString("id");
+					TootView* tootView = new TootView(content, account ? account : "@username", display_name ? display_name : "Display Name", avatar_url ? avatar_url : "", status_id ? status_id : "");
+					layout->AddView(tootView);
+					fDetailsView->InvalidateLayout(true);
 					UnlockLooper();
 				}
 				break;
@@ -542,7 +645,10 @@ private:
 };
 
 void MainWindow::OnMoreClicked(const std::string& statusId) {
-	std::cout << statusId << std::endl;
+	pthread_t thread;
+	std::string* id_copy = new std::string(statusId);
+	pthread_create(&thread, NULL, fetch_status_thread, id_copy);
+	pthread_detach(thread);
 }
 
 static MainWindow* gMainWindow = NULL;
