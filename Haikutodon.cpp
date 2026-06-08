@@ -137,12 +137,14 @@ static void* fetch_status_thread(void* arg) {
 	chunk.memory = (char *)malloc(1);
 	chunk.size = 0;
 	
-	std::string url = "https://" + std::string(domain_string) + "/api/v1/statuses/" + *statusId;
+	char path[256];
+	snprintf(path, sizeof(path), "api/v1/statuses/%s", statusId->c_str());
+	char *uri = create_uri_string(path);
 	struct curl_slist *slist1 = NULL;
 	slist1 = curl_slist_append(slist1, access_token);
 	
 	curl_handle = curl_easy_init();
-	curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
+	curl_easy_setopt(curl_handle, CURLOPT_URL, uri);
 	curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
 	curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
 	curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
