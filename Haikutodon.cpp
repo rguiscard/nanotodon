@@ -232,8 +232,8 @@ public:
 			.End()
 			.Add(dateView)
 			.View();
-		headerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 60));
-		headerView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 60));
+		headerView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 70));
+		headerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 70));
 
 #if 0
 		// Row 2: Content (original TextView)
@@ -248,8 +248,12 @@ public:
 		// Row 2b: HTML View (below original TextView for comparison)
 		HtmlView* htmlView = new HtmlView(BRect(0, 0, 100, 100), "html_view");
 		htmlView->RenderHtml(BString(content ? content : ""));
-		htmlView->SetExplicitMaxSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
-		htmlView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
+		// For some reason, height of MinSize determine the total height of GroupLayout.
+		// Thus, this number cannot be too small.
+		htmlView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 100));
+		htmlView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 250));
+		htmlView->SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP));
+		htmlView->SetMaxBytes(125);
 
 #if 0
 		// Content container with both views
@@ -273,12 +277,14 @@ public:
 			.End()
 			.AddGlue()
 			.View();
+		actionsView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 40));
+		actionsView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 40));
 
 		// Divider line
 		BView* dividerView = new BView("divider", B_WILL_DRAW);
 		dividerView->SetViewColor(ui_color(B_SHADOW_COLOR));
-		dividerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 1));
 		dividerView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 1));
+		dividerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 1));
 
 		// Main layout
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
@@ -411,46 +417,15 @@ public:
 		fGroupLayout = new BGroupLayout(B_VERTICAL);
 		fContentView->SetLayout(fGroupLayout);
 		fContentView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
-		fContentView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
-
-#if 0
-                fGroupLayout->AddView(new TootView("1"));
-                fGroupLayout->AddView(new TootView("2"));
-                fGroupLayout->AddView(new TootView("3"));
-                fGroupLayout->AddView(new TootView("4"));
-                fGroupLayout->AddView(new TootView("5"));
-                fGroupLayout->AddView(new TootView("6"));
-                fGroupLayout->AddView(new TootView("7"));
-#endif
 
 		fScrollView = new BScrollView("scroll_view", fContentView, 0, false, true);
 		fScrollView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 50));
-//		fScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
-
-#if 0
-		fInputView = new BTextView("input_view", B_WILL_DRAW);
-		fInputView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
-		fInputView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
-		BScrollView* inputScrollView = new BScrollView("input_scroll_view", fInputView, 0, false, true);
-		inputScrollView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 30));
-		inputScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
-
-		fSplitView = BLayoutBuilder::Split<>(B_VERTICAL)
-			.Add(fScrollView, 0.7f)
-			.Add(inputScrollView, 0.3f)
-			.SetCollapsible(0, false)
-			.SetCollapsible(1, true);
-		fSplitView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 50));
-		fSplitView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
-#endif
-
-//		fSendButton = new BButton("send_button", "Send", new BMessage('send'));
+		fScrollView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
 			.Add(menuBar)
 			.Add(fScrollView)
 			.End();
-//			.Add(fSendButton)
 	}
 
 	virtual void MessageReceived(BMessage* message) {
@@ -510,6 +485,7 @@ public:
 					const char *avatar_url = msg.FindString("avatar_url");
 					TootView* tootView = new TootView(content, account ? account : "@username", display_name ? display_name : "Display Name", avatar_url ? avatar_url : "");
 					fGroupLayout->AddView(tootView);
+					fContentView->InvalidateLayout(true);
 				} else {
 #if 0
 					const char *raw = msg.FindString("raw");
@@ -525,8 +501,8 @@ public:
 				}
 			}
 		}
-		fGroupLayout->Owner()->InvalidateLayout(true);
-		fScrollView->InvalidateLayout(true);
+//		fGroupLayout->Owner()->InvalidateLayout(true);
+//		fScrollView->InvalidateLayout(true);
 //		fSplitView->InvalidateLayout(true);
 		UnlockLooper();
 		}
