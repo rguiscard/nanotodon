@@ -519,8 +519,9 @@ public:
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
 			.Add(menuBar)
 			.AddGroup(B_HORIZONTAL, 0.0f)
-				.Add(fScrollView)
+				.Add(fScrollView, 1.0f)
 				.Add(fDetailsView)
+				.SetExplicitAlignment(BAlignment(B_ALIGN_USE_FULL_WIDTH, B_ALIGN_USE_FULL_HEIGHT))
 				.End()
 			.End();
 #if 0
@@ -572,9 +573,24 @@ public:
 			case DETAIL_MSG: {
 				if (LockLooper()) {
 					BGroupLayout *layout = dynamic_cast<BGroupLayout*>(fDetailsView->GetLayout());
+					// Remove previous views
+					for (int32 i = layout->CountItems()-1; i >= 0; i--) {
+						BLayoutItem *item = layout->ItemAt(i);
+						if (item != NULL) {
+							BView *view = item->View();
+							layout->RemoveItem(i);
+							if (view != NULL) {
+								delete view;
+							} else {
+								delete item;
+							}
+						}
+					}
+
 					TootView* tootView = new TootView();
 					tootView->SetToot(message);
 					layout->AddView(tootView);
+					layout->AddItem(BSpaceLayoutItem::CreateGlue()); 
 					fDetailsView->InvalidateLayout(true);
 					UnlockLooper();
 				}
