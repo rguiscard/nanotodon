@@ -166,6 +166,7 @@ static void* fetch_status_thread(void* arg) {
 			struct tm tm;
 			time_t time;
 			char datebuf[40];
+			char short_datebuf[10];
 			
 			read_json_fom_path(jobj, "content", &content);
 			read_json_fom_path(jobj, "account/acct", &screen_name);
@@ -183,6 +184,7 @@ static void* fetch_status_thread(void* arg) {
 				strptime(created_at->string_, "%Y-%m-%dT%H:%M:%S", &tm);
 				time = timegm(&tm);
 				strftime(datebuf, sizeof(datebuf), "%x(%a) %X", localtime(&time));
+				strftime(short_datebuf, sizeof(short_datebuf), "%m/%d", localtime(&time));
 			}
 			
 			BMessage msg(DETAIL_MSG);
@@ -192,6 +194,7 @@ static void* fetch_status_thread(void* arg) {
 				msg.AddString("display_name", display_name->string_);
 			if(status_id) msg.AddString("id", status_id);
 			if(datebuf[0]) msg.AddString("date", datebuf);
+			if(short_datebuf[0]) msg.AddString("short_date", short_datebuf);
 			if(vstr) msg.AddString("visibility", vstr);
 			
 			if(g_main_window_messenger.IsValid()) {
@@ -291,25 +294,19 @@ public:
 
 class TootView : public BView {
 public:
-#if 0
-	TootView(const char* content, const char* account = "@username", const char* display_name = "Display Name", const char* avatar_url = "", const char* status_id = "")
-		: BView("toot_view", B_WILL_DRAW)
-	{
-		BuildUI(content, account, display_name, avatar_url, status_id);
-	}
-#endif
 	TootView()
 		: BView("toot_view", B_WILL_DRAW)
 	{
 	}
 
-	void SetToot(BMessage* msg) {
+	virtual void SetToot(BMessage* msg) {
 		const char* content = msg->FindString("content");
 		const char* account = msg->FindString("account");
 		const char* display_name = msg->FindString("display_name");
 		const char* avatar_url = msg->FindString("avatar_url");
 		const char* status_id = msg->FindString("id");
-		BuildUI(content, account, display_name, avatar_url, status_id);
+		const char* short_date = msg->FindString("short_date");
+		BuildUI(content, account, display_name, avatar_url, status_id, short_date);
 	}
 
 	void UpdateAvatarIfNeeded(const std::string& url) {
@@ -320,8 +317,8 @@ public:
 
 	~TootView() {}
 
-private:
-	void BuildUI(const char* content, const char* account, const char* display_name, const char* avatar_url, const char* status_id) {
+protected:
+	virtual void BuildUI(const char* content, const char* account, const char* display_name, const char* avatar_url, const char* status_id, const char* short_date) {
 		fAvatarView = new AvatarView(avatar_url ? avatar_url : "");
 		fAvatarUrl = avatar_url ? avatar_url : "";
 		fStatusId = status_id ? status_id : "";
@@ -332,7 +329,7 @@ private:
 		BStringView* handleView = new BStringView("handle_view", account);
 		handleView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 
-		BStringView* dateView = new BStringView("date_view", "Date");
+		BStringView* dateView = new BStringView("date_view", short_date ? short_date : "");
 		dateView->SetAlignment(B_ALIGN_RIGHT);
 		dateView->SetExplicitMaxSize(BSize(100, 60));
 		dateView->SetExplicitMinSize(BSize(100, 60));
@@ -398,16 +395,89 @@ private:
 			bool in_cache = (g_avatar_cache.find(fAvatarUrl) != g_avatar_cache.end());
 			pthread_mutex_unlock(&g_avatar_mutex);
 			
-			if (!in_cache) {
+if (!in_cache) {
 				request_avatar_download(fAvatarUrl);
 			}
 		}
 	}
 
+protected:
 	std::string fAvatarUrl;
 	std::string fStatusId;
 	BTextView* fContentView;
 	AvatarView* fAvatarView;
+};
+
+class FullTootView : public TootView {
+protected:
+	void BuildUI(const char* content, const char* account, const char* display_name, const char* avatar_url, const char* status_id, const char* short_date) override {
+		fAvatarView = new AvatarView(avatar_url ? avatar_url : "");
+		fAvatarUrl = avatar_url ? avatar_url : "";
+		fStatusId = status_id ? status_id : "";
+
+		BStringView* nameView = new BStringView("name_view", display_name);
+		nameView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
+		
+		BStringView* handleView = new BStringView("handle_view", account);
+		handleView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
+
+		BStringView* dateView = new BStringView("date_view", short_date ? short_date : "");
+		dateView->SetAlignment(B_ALIGN_RIGHT);
+		dateView->SetExplicitMaxSize(BSize(100, B_SIZE_UNSET));
+		dateView->SetExplicitMinSize(BSize(100, B_SIZE_UNSET));
+
+		BView* headerView = BLayoutBuilder::Group<>(B_HORIZONTAL)
+			.Add(fAvatarView)
+			.AddGroup(B_VERTICAL)
+				.Add(nameView)
+				.Add(handleView)
+			.End()
+			.Add(dateView)
+			.View();
+		headerView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 70));
+		headerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
+
+		HtmlView* htmlView = new HtmlView(BRect(0, 0, 100, 30), "html_view");
+		htmlView->RenderHtml(BString(content ? content : ""));
+		htmlView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
+		htmlView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+		htmlView->SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP));
+
+		BView* actionsView = BLayoutBuilder::Group<>(B_HORIZONTAL)
+			.AddGroup(B_HORIZONTAL, 0.0f)
+				.Add(new BButton("reply_button", "Reply", NULL))
+				.Add(new BButton("boost_button", "Boost", NULL))
+				.Add(new BButton("like_button", "Like", NULL))
+				.Add(new BButton("bookmark_button", "Bookmark", NULL))
+				.SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP))
+			.End()
+			.AddGlue()
+			.View();
+		actionsView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 40));
+		actionsView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 40));
+
+		BView* dividerView = new BView("divider", B_WILL_DRAW);
+		dividerView->SetViewColor(ui_color(B_SHADOW_COLOR));
+		dividerView->SetExplicitMinSize(BSize(B_SIZE_UNSET, 1));
+		dividerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 1));
+
+		BLayoutBuilder::Group<>(this, B_VERTICAL)
+			.Add(headerView)
+			.Add(htmlView)
+			.Add(actionsView)
+			.Add(dividerView)
+			.SetInsets(5, 5, 5, 0);
+
+		if (!fAvatarUrl.empty()) {
+			pthread_mutex_lock(&g_avatar_mutex);
+			bool in_cache = (g_avatar_cache.find(fAvatarUrl) != g_avatar_cache.end());
+			pthread_mutex_unlock(&g_avatar_mutex);
+			
+			if (!in_cache) {
+				request_avatar_download(fAvatarUrl);
+			}
+		}
+	}
 };
 
 // Helper to strip HTML entities and tags, returning clean text
@@ -565,6 +635,7 @@ public:
 								}
 							}
 						}
+						// Also need to check for fDetailsView
 					}
 					UnlockLooper();
 				}
@@ -587,7 +658,7 @@ public:
 						}
 					}
 
-					TootView* tootView = new TootView();
+					FullTootView* tootView = new FullTootView();
 					tootView->SetToot(message);
 					layout->AddView(tootView);
 					layout->AddItem(BSpaceLayoutItem::CreateGlue()); 
@@ -663,6 +734,7 @@ void stream_event_update(sjson_node *jobj_from_string)
 	time_t time;
 #define DATEBUFLEN 40
 	char datebuf[DATEBUFLEN];
+	char short_datebuf[10];
 	if(!jobj_from_string) return;
 
 #ifdef USE_SIXEL
@@ -682,6 +754,7 @@ void stream_event_update(sjson_node *jobj_from_string)
 	strptime(created_at->string_, "%Y-%m-%dT%H:%M:%S", &tm);
 	time = timegm(&tm);
 	strftime(datebuf, sizeof(datebuf), "%x(%a) %X", localtime(&time));
+	strftime(short_datebuf, sizeof(short_datebuf), "%m/%d", localtime(&time));
 
 	vstr = visibility->string_;
 
@@ -868,7 +941,9 @@ void stream_event_update(sjson_node *jobj_from_string)
 		msg.AddString("visibility", vstr);
 	if (datebuf && datebuf[0])
 		msg.AddString("date", datebuf);
-	
+	if (short_datebuf && short_datebuf[0])
+		msg.AddString("short_date", short_datebuf);
+
 	struct sjson_node *avatar;
 	read_json_fom_path(jobj_from_string, "account/avatar", &avatar);
 	if (avatar && avatar->string_)
