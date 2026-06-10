@@ -299,16 +299,6 @@ public:
 	{
 	}
 
-	virtual void SetToot(BMessage* msg) {
-		const char* content = msg->FindString("content");
-		const char* account = msg->FindString("account");
-		const char* display_name = msg->FindString("display_name");
-		const char* avatar_url = msg->FindString("avatar_url");
-		const char* status_id = msg->FindString("id");
-		const char* short_date = msg->FindString("short_date");
-		BuildUI(content, account, display_name, avatar_url, status_id, short_date);
-	}
-
 	void UpdateAvatarIfNeeded(const std::string& url) {
 		if (fAvatarUrl == url) {
 			fAvatarView->UpdateIfNeeded();
@@ -317,8 +307,15 @@ public:
 
 	~TootView() {}
 
-protected:
-	virtual void BuildUI(const char* content, const char* account, const char* display_name, const char* avatar_url, const char* status_id, const char* short_date) {
+	virtual void BuildUI(BMessage *msg) {
+		const char* reblog_display_name = msg->FindString("reblog_display_name");
+		const char* content = msg->FindString("content");
+		const char* account = msg->FindString("account");
+		const char* display_name = msg->FindString("display_name");
+		const char* avatar_url = msg->FindString("avatar_url");
+		const char* status_id = msg->FindString("id");
+		const char* short_date = msg->FindString("short_date");
+
 		fAvatarView = new AvatarView(avatar_url ? avatar_url : "");
 		fAvatarUrl = avatar_url ? avatar_url : "";
 		fStatusId = status_id ? status_id : "";
@@ -361,8 +358,8 @@ protected:
 		htmlView->SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP));
 		htmlView->SetMaxBytes(125);
 
-		BMessage *msg = new BMessage(MORE_BUTTON_MSG);
-		msg->AddString("id", fStatusId.c_str());
+		BMessage *more_msg = new BMessage(MORE_BUTTON_MSG);
+		more_msg->AddString("id", fStatusId.c_str());
 
 		BView* actionsView = BLayoutBuilder::Group<>(B_HORIZONTAL)
 			.AddGroup(B_HORIZONTAL, 0.0f)
@@ -370,7 +367,7 @@ protected:
 				.Add(new BButton("boost_button", "Boost", NULL))
 				.Add(new BButton("like_button", "Like", NULL))
 				.Add(new BButton("bookmark_button", "Bookmark", NULL))
-				.Add(new BButton("more_button", "More...", msg))
+				.Add(new BButton("more_button", "More...", more_msg))
 				.SetExplicitAlignment(BAlignment(B_ALIGN_LEFT, B_ALIGN_TOP))
 			.End()
 			.AddGlue()
@@ -409,8 +406,16 @@ protected:
 };
 
 class FullTootView : public TootView {
-protected:
-	void BuildUI(const char* content, const char* account, const char* display_name, const char* avatar_url, const char* status_id, const char* short_date) override {
+public:
+	void BuildUI(BMessage *msg) {
+		const char* reblog_display_name = msg->FindString("reblog_display_name");
+		const char* content = msg->FindString("content");
+		const char* account = msg->FindString("account");
+		const char* display_name = msg->FindString("display_name");
+		const char* avatar_url = msg->FindString("avatar_url");
+		const char* status_id = msg->FindString("id");
+		const char* short_date = msg->FindString("short_date");
+
 		fAvatarView = new AvatarView(avatar_url ? avatar_url : "");
 		fAvatarUrl = avatar_url ? avatar_url : "";
 		fStatusId = status_id ? status_id : "";
@@ -659,7 +664,7 @@ public:
 					}
 
 					FullTootView* tootView = new FullTootView();
-					tootView->SetToot(message);
+					tootView->BuildUI(message);
 					layout->AddView(tootView);
 					layout->AddItem(BSpaceLayoutItem::CreateGlue()); 
 					fDetailsView->InvalidateLayout(true);
@@ -684,7 +689,7 @@ public:
 				const char *content = msg.FindString("content");
 				if (content) {
 					TootView* tootView = new TootView();
-					tootView->SetToot(&msg);
+					tootView->BuildUI(&msg);
 					fGroupLayout->AddView(tootView);
 					fContentView->InvalidateLayout(true);
 				} else {
@@ -725,8 +730,98 @@ void MainWindow::OnMoreClicked(const std::string& statusId) {
 
 static MainWindow* gMainWindow = NULL;
 
+// If it is a reblog toot, jobj_from_string include the "reblog" part while reblog_obje is the whole json.
+// If it is a plain toot, jobj_from_string is the toot and reblog_obj is NULL.
+// In any case, the jobj_from_string is the toot to display content. 
+void stream_event_update_to_msg(sjson_node *jobj_from_string)
+{
+	sjson_node *toot_jobj = jobj_from_string;
+	sjson_node *content, *screen_name, *display_name, *reblog, *visibility;
+	sjson_node *created_at;
+	const char *sname, *dname, *vstr;
+	struct tm tm;
+	time_t time;
+#define DATEBUFLEN 40
+	char datebuf[DATEBUFLEN];
+	char short_datebuf[10];
+	struct sjson_node *avatar, *sensitive;
+
+	if(!toot_jobj) return;
+
+	read_json_fom_path(toot_jobj, "account/avatar", &avatar);
+	read_json_fom_path(toot_jobj, "sensitive", &sensitive);
+
+	read_json_fom_path(toot_jobj, "content", &content);
+	read_json_fom_path(toot_jobj, "account/acct", &screen_name);
+	read_json_fom_path(toot_jobj, "account/display_name", &display_name);
+
+	read_json_fom_path(toot_jobj, "reblog", &reblog);
+	read_json_fom_path(toot_jobj, "created_at", &created_at);
+	read_json_fom_path(toot_jobj, "visibility", &visibility);
+	memset(&tm, 0, sizeof(tm));
+	strptime(created_at->string_, "%Y-%m-%dT%H:%M:%S", &tm);
+	time = timegm(&tm);
+	strftime(datebuf, sizeof(datebuf), "%x(%a) %X", localtime(&time));
+	strftime(short_datebuf, sizeof(short_datebuf), "%m/%d", localtime(&time));
+
+	vstr = visibility->string_;
+
+	sbctx_t sb;
+	sbctx_t *sbctx = &sb;
+
+	ninitbuf(&sb);
+
+	// Create BMessage with structured toot data
+	BMessage msg(TOOT_MSG);
+
+	// Check reblog
+	sjson_tag type;
+
+	type = reblog->tag;
+	sname = screen_name->string_;
+	dname = display_name->string_;
+
+	// ブーストで回ってきた場合はその旗を表示
+	if(type != SJSON_NULL) {
+		msg.AddString("reblog_screen_name", sname);
+		msg.AddString("reblog_display_name", dname);
+		toot_jobj = reblog;
+	}
+
+	msg.AddString("raw", sb.buf);
+	if (screen_name && screen_name->string_)
+		msg.AddString("account", screen_name->string_);
+	if (display_name && display_name->string_ && display_name->string_[0])
+		msg.AddString("display_name", display_name->string_);
+	if (content && content->string_)
+		msg.AddString("content", content->string_);
+	if (created_at && created_at->string_)
+		msg.AddString("created_at", created_at->string_);
+	if (visibility && vstr)
+		msg.AddString("visibility", vstr);
+	if (datebuf && datebuf[0])
+		msg.AddString("date", datebuf);
+	if (short_datebuf && short_datebuf[0])
+		msg.AddString("short_date", short_datebuf);
+
+	read_json_fom_path(toot_jobj, "account/avatar", &avatar);
+	if (avatar && avatar->string_)
+		msg.AddString("avatar_url", avatar->string_);
+	
+	struct sjson_node *id;
+	read_json_fom_path(toot_jobj, "id", &id);
+	if (id && id->string_)
+		msg.AddString("id", id->string_);
+	
+	queue_message(&msg);
+}
+
 void stream_event_update(sjson_node *jobj_from_string)
 {
+	// Create BMessage with structured toot data and queue it
+	stream_event_update_to_msg(jobj_from_string);
+	return;
+
 	sjson_node *content, *screen_name, *display_name, *reblog, *visibility;
 	const char *sname, *dname, *vstr;
 	sjson_node *created_at;
@@ -775,7 +870,7 @@ void stream_event_update(sjson_node *jobj_from_string)
 	sname = screen_name->string_;
 	dname = display_name->string_;
 
-	// ブーストで回ってきた場合はその旨を表示
+	// ブーストで回ってきた場合はその旗を表示
 	if(type != SJSON_NULL) {
 		sbctx_t sb_reb;
 		sbctx_t *sbctx_reb = &sb_reb;
@@ -797,6 +892,7 @@ void stream_event_update(sjson_node *jobj_from_string)
 
 		queue_sbctx(&sb_reb);
 
+		// Recursively process the reblogged content
 		stream_event_update(reblog);
 		return;
 	}
@@ -926,35 +1022,6 @@ void stream_event_update(sjson_node *jobj_from_string)
 
 	nflushcache(&sb);
 	
-	// Create BMessage with structured toot data
-	BMessage msg(TOOT_MSG);
-	msg.AddString("raw", sb.buf);
-	if (screen_name && screen_name->string_)
-		msg.AddString("account", screen_name->string_);
-	if (display_name && display_name->string_ && display_name->string_[0])
-		msg.AddString("display_name", display_name->string_);
-	if (content && content->string_)
-		msg.AddString("content", content->string_);
-	if (created_at && created_at->string_)
-		msg.AddString("created_at", created_at->string_);
-	if (visibility && vstr)
-		msg.AddString("visibility", vstr);
-	if (datebuf && datebuf[0])
-		msg.AddString("date", datebuf);
-	if (short_datebuf && short_datebuf[0])
-		msg.AddString("short_date", short_datebuf);
-
-	struct sjson_node *avatar;
-	read_json_fom_path(jobj_from_string, "account/avatar", &avatar);
-	if (avatar && avatar->string_)
-		msg.AddString("avatar_url", avatar->string_);
-	
-	struct sjson_node *id;
-	read_json_fom_path(jobj_from_string, "id", &id);
-	if (id && id->string_)
-		msg.AddString("id", id->string_);
-	
-	queue_message(&msg);
 
 	// 添付メディアのURL表示
 	struct sjson_node *media_attachments;
