@@ -429,6 +429,10 @@ public:
 			.Add(dividerView)
 			.SetInsets(5, 5, 5, 0);
 
+		if (context_text[0] == '\0') {
+			fContextView->Hide();
+		}
+
 		if (!fAvatarUrl.empty()) {
 			pthread_mutex_lock(&g_avatar_mutex);
 			bool in_cache = (g_avatar_cache.find(fAvatarUrl) != g_avatar_cache.end());
@@ -533,6 +537,10 @@ public:
 			.Add(actionsView)
 			.Add(dividerView)
 			.SetInsets(5, 5, 5, 0);
+
+		if (context_text[0] == '\0') {
+			fContextView->Hide();
+		}
 
 		if (!fAvatarUrl.empty()) {
 			pthread_mutex_lock(&g_avatar_mutex);
