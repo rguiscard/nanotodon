@@ -45,6 +45,8 @@ enum {
 // Avatar cache
 static std::map<std::string, BBitmap*> g_avatar_cache;
 static pthread_mutex_t g_avatar_mutex = PTHREAD_MUTEX_INITIALIZER;
+static std::map<std::string, std::pair<std::string, std::string>> g_account_cache;
+static pthread_mutex_t g_account_mutex = PTHREAD_MUTEX_INITIALIZER;
 static BMessenger g_main_window_messenger;
 
 // Callback for curl to write data into memory
@@ -161,7 +163,7 @@ static void* fetch_status_thread(void* arg) {
 		struct sjson_node *jobj = sjson_decode(ctx, chunk.memory);
 		
 		if(jobj) {
-			sjson_node *content, *screen_name, *display_name, *created_at, *visibility, *id;
+			sjson_node *content, *screen_name, *display_name, *created_at, *visibility, *id, *id_node;
 			const char *account = NULL, *dname = NULL, *vstr = NULL, *status_id = NULL;
 			struct tm tm;
 			time_t time;
@@ -171,12 +173,29 @@ static void* fetch_status_thread(void* arg) {
 			read_json_fom_path(jobj, "content", &content);
 			read_json_fom_path(jobj, "account/acct", &screen_name);
 			read_json_fom_path(jobj, "account/display_name", &display_name);
+			read_json_fom_path(jobj, "account/id", &id_node);
 			read_json_fom_path(jobj, "created_at", &created_at);
 			read_json_fom_path(jobj, "visibility", &visibility);
 			read_json_fom_path(jobj, "id", &id);
 			
-			if(screen_name && screen_name->string_) account = screen_name->string_;
-			if(display_name && display_name->string_) dname = display_name->string_;
+			const char *acct_str = screen_name && screen_name->string_ ? screen_name->string_ : "";
+			const char *dname_str = display_name && display_name->string_ ? display_name->string_ : "";
+			const char *id_str = id_node && id_node->string_ ? id_node->string_ : "";
+
+			if (id_str[0]) {
+				pthread_mutex_lock(&g_account_mutex);
+				auto it = g_account_cache.find(id_str);
+				if (it != g_account_cache.end()) {
+					acct_str = it->second.first.c_str();
+					dname_str = it->second.second.c_str();
+				} else {
+					g_account_cache[id_str] = std::make_pair(acct_str, dname_str);
+				}
+				pthread_mutex_unlock(&g_account_mutex);
+			}
+
+			account = acct_str;
+			dname = dname_str;
 			if(visibility && visibility->string_) vstr = visibility->string_;
 			if(id && id->string_) status_id = id->string_;
 			if(created_at && created_at->string_) {
@@ -187,11 +206,11 @@ static void* fetch_status_thread(void* arg) {
 				strftime(short_datebuf, sizeof(short_datebuf), "%m/%d", localtime(&time));
 			}
 			
-			BMessage msg(DETAIL_MSG);
-			if(content && content->string_) msg.AddString("content", content->string_);
-			if(screen_name && screen_name->string_) msg.AddString("account", screen_name->string_);
-			if(display_name && display_name->string_ && display_name->string_[0])
-				msg.AddString("display_name", display_name->string_);
+		BMessage msg(DETAIL_MSG);
+		if(content && content->string_) msg.AddString("content", content->string_);
+		if(account) msg.AddString("account", account);
+		if(dname && dname[0])
+			msg.AddString("display_name", dname);
 			if(status_id) msg.AddString("id", status_id);
 			if(datebuf[0]) msg.AddString("date", datebuf);
 			if(short_datebuf[0]) msg.AddString("short_date", short_datebuf);
@@ -737,7 +756,7 @@ void stream_event_update_to_msg(sjson_node *jobj_from_string)
 {
 	sjson_node *toot_jobj = jobj_from_string;
 	sjson_node *content, *screen_name, *display_name, *reblog, *visibility;
-	sjson_node *created_at;
+	sjson_node *created_at, *id_node;
 	const char *sname, *dname, *vstr;
 	struct tm tm;
 	time_t time;
@@ -754,7 +773,26 @@ void stream_event_update_to_msg(sjson_node *jobj_from_string)
 	read_json_fom_path(toot_jobj, "content", &content);
 	read_json_fom_path(toot_jobj, "account/acct", &screen_name);
 	read_json_fom_path(toot_jobj, "account/display_name", &display_name);
+	read_json_fom_path(toot_jobj, "account/id", &id_node);
 
+	const char *acct_str = screen_name && screen_name->string_ ? screen_name->string_ : "";
+	const char *dname_str = display_name && display_name->string_ ? display_name->string_ : "";
+	const char *id_str = id_node && id_node->string_ ? id_node->string_ : "";
+
+	if (id_str[0]) {
+		pthread_mutex_lock(&g_account_mutex);
+		auto it = g_account_cache.find(id_str);
+		if (it != g_account_cache.end()) {
+			acct_str = it->second.first.c_str();
+			dname_str = it->second.second.c_str();
+		} else {
+			g_account_cache[id_str] = std::make_pair(acct_str, dname_str);
+		}
+		pthread_mutex_unlock(&g_account_mutex);
+	}
+
+	sname = acct_str;
+	dname = dname_str;
 	read_json_fom_path(toot_jobj, "reblog", &reblog);
 	read_json_fom_path(toot_jobj, "created_at", &created_at);
 	read_json_fom_path(toot_jobj, "visibility", &visibility);
@@ -778,8 +816,6 @@ void stream_event_update_to_msg(sjson_node *jobj_from_string)
 	sjson_tag type;
 
 	type = reblog->tag;
-	sname = screen_name->string_;
-	dname = display_name->string_;
 
 	// ブーストで回ってきた場合はその旗を表示
 	if(type != SJSON_NULL) {
@@ -789,10 +825,10 @@ void stream_event_update_to_msg(sjson_node *jobj_from_string)
 	}
 
 	msg.AddString("raw", sb.buf);
-	if (screen_name && screen_name->string_)
-		msg.AddString("account", screen_name->string_);
-	if (display_name && display_name->string_ && display_name->string_[0])
-		msg.AddString("display_name", display_name->string_);
+	if (acct_str[0])
+		msg.AddString("account", acct_str);
+	if (dname_str[0])
+		msg.AddString("display_name", dname_str);
 	if (content && content->string_)
 		msg.AddString("content", content->string_);
 	if (created_at && created_at->string_)
@@ -1090,15 +1126,32 @@ void stream_event_update(sjson_node *jobj_from_string)
 
 void stream_event_notify(struct sjson_node *jobj_from_string)
 {
-	struct sjson_node *notify_type, *screen_name, *display_name, *status;
+	struct sjson_node *notify_type, *screen_name, *display_name, *status, *id_node;
 	const char *dname;
 	if(!jobj_from_string) return;
 	read_json_fom_path(jobj_from_string, "type", &notify_type);
 	read_json_fom_path(jobj_from_string, "account/acct", &screen_name);
 	read_json_fom_path(jobj_from_string, "account/display_name", &display_name);
+	read_json_fom_path(jobj_from_string, "account/id", &id_node);
 	int exist_status = read_json_fom_path(jobj_from_string, "status", &status);
 
 	putchar('\a');
+
+	const char *acct_str = screen_name && screen_name->string_ ? screen_name->string_ : "";
+	const char *dname_str = display_name && display_name->string_ ? display_name->string_ : "";
+	const char *id_str = id_node && id_node->string_ ? id_node->string_ : "";
+
+	if (id_str[0]) {
+		pthread_mutex_lock(&g_account_mutex);
+		auto it = g_account_cache.find(id_str);
+		if (it != g_account_cache.end()) {
+			acct_str = it->second.first.c_str();
+			dname_str = it->second.second.c_str();
+		} else {
+			g_account_cache[id_str] = std::make_pair(acct_str, dname_str);
+		}
+		pthread_mutex_unlock(&g_account_mutex);
+	}
 
 	sbctx_t sb;
 	sbctx_t *sbctx = &sb;
@@ -1115,9 +1168,9 @@ void stream_event_notify(struct sjson_node *jobj_from_string)
 	naddstr(sbctx, t);
 	free(t);
 	naddstr(sbctx, " from ");
-	naddstr(sbctx, screen_name->string_);
+	naddstr(sbctx, acct_str);
 
-	dname = display_name->string_;
+	dname = dname_str;
 
 	// dname(display_name)が空の場合は括弧を表示しない
 	if (dname[0] != '\0') {
@@ -1137,10 +1190,10 @@ void stream_event_notify(struct sjson_node *jobj_from_string)
 	BMessage msg(TOOT_MSG);
 	msg.AddString("raw", sb.buf);
 	msg.AddString("type", notify_type->string_);
-	if (screen_name && screen_name->string_)
-		msg.AddString("account", screen_name->string_);
-	if (display_name && display_name->string_ && display_name->string_[0])
-		msg.AddString("display_name", display_name->string_);
+	if (acct_str[0])
+		msg.AddString("account", acct_str);
+	if (dname_str[0])
+		msg.AddString("display_name", dname_str);
 	queue_message(&msg);
 
 	// 通知対象のTootを表示,Follow通知だとtypeがNULLになる
