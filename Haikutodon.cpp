@@ -38,6 +38,7 @@ enum {
 	TOOT_MSG = 'toot',
 	AVATAR_DOWNLOADED = 'avdl',
 	ACCOUNT_FETCHED = 'acct',
+	STATUS_MSG = 'stat',
 	POST_WINDOW_MSG = 'post',
 	MORE_BUTTON_MSG = 'more',
 	DETAIL_MSG = 'detl'
@@ -135,6 +136,12 @@ static void request_avatar_download(const std::string& url) {
 static void* fetch_status_thread(void* arg) {
 	std::string* statusId = (std::string*)arg;
 	
+	if (g_main_window_messenger.IsValid()) {
+		BMessage status_msg(STATUS_MSG);
+		status_msg.AddString("text", "Fetching status...");
+		g_main_window_messenger.SendMessage(&status_msg);
+	}
+	
 	CURL *curl_handle;
 	CURLcode res;
 	struct MemoryStruct chunk;
@@ -179,6 +186,12 @@ static void* fetch_status_thread(void* arg) {
 	
 	free(chunk.memory);
 	delete statusId;
+	
+	if (g_main_window_messenger.IsValid()) {
+		BMessage status_msg(STATUS_MSG);
+		status_msg.AddString("text", "");
+		g_main_window_messenger.SendMessage(&status_msg);
+	}
 	return NULL;
 }
 
@@ -699,6 +712,8 @@ public:
 		fDetailsView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 		fDetailsView->SetExplicitMinSize(BSize(B_SIZE_UNSET, B_SIZE_UNSET));
 
+		fStatusView = new BStringView("status_view", "");
+
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
 			.Add(menuBar)
 			.AddGroup(B_HORIZONTAL, 0.0f)
@@ -706,6 +721,7 @@ public:
 				.Add(fDetailsView)
 				.SetExplicitAlignment(BAlignment(B_ALIGN_USE_FULL_WIDTH, B_ALIGN_USE_FULL_HEIGHT))
 				.End()
+			.Add(fStatusView)
 			.End();
 #if 0
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
@@ -771,6 +787,15 @@ public:
 						}
 					}
 					UnlockLooper();
+				}
+				break;
+			}
+			case STATUS_MSG: {
+				if (fStatusView) {
+					const char* text = message->FindString("text");
+					if (text) {
+						fStatusView->SetText(text);
+					}
 				}
 				break;
 			}
@@ -847,11 +872,15 @@ private:
 	BView* fDetailsView;
 	BSplitView* fSplitView;
 	BGroupLayout* fGroupLayout;
+	BStringView* fStatusView;
 };
 
 void MainWindow::OnMoreClicked(const std::string& statusId) {
 	pthread_t thread;
 	std::string* id_copy = new std::string(statusId);
+	if (fStatusView) {
+		fStatusView->SetText("Fetching status...");
+	}
 	pthread_create(&thread, NULL, fetch_status_thread, id_copy);
 	pthread_detach(thread);
 }
