@@ -163,7 +163,7 @@ static void* fetch_status_thread(void* arg) {
 		struct sjson_node *jobj = sjson_decode(ctx, chunk.memory);
 		
 		if(jobj) {
-			sjson_node *content, *screen_name, *display_name, *created_at, *visibility, *id, *id_node;
+			sjson_node *content, *screen_name, *display_name, *created_at, *visibility, *id, *id_node, *in_reply_to_account_id;
 			const char *account = NULL, *dname = NULL, *vstr = NULL, *status_id = NULL;
 			struct tm tm;
 			time_t time;
@@ -174,6 +174,7 @@ static void* fetch_status_thread(void* arg) {
 			read_json_fom_path(jobj, "account/acct", &screen_name);
 			read_json_fom_path(jobj, "account/display_name", &display_name);
 			read_json_fom_path(jobj, "account/id", &id_node);
+			read_json_fom_path(jobj, "in_reply_to_account_id", &in_reply_to_account_id);
 			read_json_fom_path(jobj, "created_at", &created_at);
 			read_json_fom_path(jobj, "visibility", &visibility);
 			read_json_fom_path(jobj, "id", &id);
@@ -211,7 +212,11 @@ static void* fetch_status_thread(void* arg) {
 		if(account) msg.AddString("account", account);
 		if(dname && dname[0])
 			msg.AddString("display_name", dname);
-			if(status_id) msg.AddString("id", status_id);
+		if(in_reply_to_account_id && in_reply_to_account_id->string_)
+			msg.AddString("in_reply_to_account_id", in_reply_to_account_id->string_);
+		if(id_node && id_node->string_)
+			msg.AddString("account_id", id_node->string_);
+		if(status_id) msg.AddString("id", status_id);
 			if(datebuf[0]) msg.AddString("date", datebuf);
 			if(short_datebuf[0]) msg.AddString("short_date", short_datebuf);
 			if(vstr) msg.AddString("visibility", vstr);
@@ -328,12 +333,15 @@ public:
 
 	virtual void BuildUI(BMessage *msg) {
 		const char* reblog_display_name = msg->FindString("reblog_display_name");
+		const char* reblog_screen_name = msg->FindString("reblog_screen_name");
 		const char* content = msg->FindString("content");
 		const char* account = msg->FindString("account");
 		const char* display_name = msg->FindString("display_name");
 		const char* avatar_url = msg->FindString("avatar_url");
 		const char* status_id = msg->FindString("id");
 		const char* short_date = msg->FindString("short_date");
+		const char* in_reply_to_account_id = msg->FindString("in_reply_to_account_id");
+		const char* account_id = msg->FindString("account_id");
 
 		fAvatarView = new AvatarView(avatar_url ? avatar_url : "");
 		fAvatarUrl = avatar_url ? avatar_url : "";
@@ -349,6 +357,20 @@ public:
 		dateView->SetAlignment(B_ALIGN_RIGHT);
 		dateView->SetExplicitMaxSize(BSize(100, 60));
 		dateView->SetExplicitMinSize(BSize(100, 60));
+
+		const char* context_text = "";
+		if (reblog_screen_name && reblog_screen_name[0]) {
+			context_text = reblog_screen_name;
+		} else if (in_reply_to_account_id && in_reply_to_account_id[0]) {
+			if (account_id && account_id[0] && strcmp(in_reply_to_account_id, account_id) == 0) {
+				context_text = "Continued thread";
+			} else {
+				context_text = in_reply_to_account_id;
+			}
+		}
+
+		fContextView = new BStringView("context_view", context_text);
+		fContextView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 
 		BView* headerView = BLayoutBuilder::Group<>(B_HORIZONTAL)
 			.Add(fAvatarView)
@@ -400,6 +422,7 @@ public:
 		dividerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 1));
 
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
+			.Add(fContextView)
 			.Add(headerView)
 			.Add(htmlView)
 			.Add(actionsView)
@@ -411,7 +434,7 @@ public:
 			bool in_cache = (g_avatar_cache.find(fAvatarUrl) != g_avatar_cache.end());
 			pthread_mutex_unlock(&g_avatar_mutex);
 			
-if (!in_cache) {
+			if (!in_cache) {
 				request_avatar_download(fAvatarUrl);
 			}
 		}
@@ -422,18 +445,22 @@ protected:
 	std::string fStatusId;
 	BTextView* fContentView;
 	AvatarView* fAvatarView;
+	BStringView* fContextView;
 };
 
 class FullTootView : public TootView {
 public:
 	void BuildUI(BMessage *msg) {
 		const char* reblog_display_name = msg->FindString("reblog_display_name");
+		const char* reblog_screen_name = msg->FindString("reblog_screen_name");
 		const char* content = msg->FindString("content");
 		const char* account = msg->FindString("account");
 		const char* display_name = msg->FindString("display_name");
 		const char* avatar_url = msg->FindString("avatar_url");
 		const char* status_id = msg->FindString("id");
 		const char* short_date = msg->FindString("short_date");
+		const char* in_reply_to_account_id = msg->FindString("in_reply_to_account_id");
+		const char* account_id = msg->FindString("account_id");
 
 		fAvatarView = new AvatarView(avatar_url ? avatar_url : "");
 		fAvatarUrl = avatar_url ? avatar_url : "";
@@ -449,6 +476,20 @@ public:
 		dateView->SetAlignment(B_ALIGN_RIGHT);
 		dateView->SetExplicitMaxSize(BSize(100, B_SIZE_UNSET));
 		dateView->SetExplicitMinSize(BSize(100, B_SIZE_UNSET));
+
+		const char* context_text = "";
+		if (reblog_screen_name && reblog_screen_name[0]) {
+			context_text = reblog_screen_name;
+		} else if (in_reply_to_account_id && in_reply_to_account_id[0]) {
+			if (account_id && account_id[0] && strcmp(in_reply_to_account_id, account_id) == 0) {
+				context_text = "Continued thread";
+			} else {
+				context_text = in_reply_to_account_id;
+			}
+		}
+
+		fContextView = new BStringView("context_view", context_text);
+		fContextView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 
 		BView* headerView = BLayoutBuilder::Group<>(B_HORIZONTAL)
 			.Add(fAvatarView)
@@ -486,6 +527,7 @@ public:
 		dividerView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, 1));
 
 		BLayoutBuilder::Group<>(this, B_VERTICAL)
+			.Add(fContextView)
 			.Add(headerView)
 			.Add(htmlView)
 			.Add(actionsView)
@@ -756,7 +798,7 @@ void stream_event_update_to_msg(sjson_node *jobj_from_string)
 {
 	sjson_node *toot_jobj = jobj_from_string;
 	sjson_node *content, *screen_name, *display_name, *reblog, *visibility;
-	sjson_node *created_at, *id_node;
+	sjson_node *created_at, *id_node, *in_reply_to_account_id;
 	const char *sname, *dname, *vstr;
 	struct tm tm;
 	time_t time;
@@ -774,6 +816,7 @@ void stream_event_update_to_msg(sjson_node *jobj_from_string)
 	read_json_fom_path(toot_jobj, "account/acct", &screen_name);
 	read_json_fom_path(toot_jobj, "account/display_name", &display_name);
 	read_json_fom_path(toot_jobj, "account/id", &id_node);
+	read_json_fom_path(toot_jobj, "in_reply_to_account_id", &in_reply_to_account_id);
 
 	const char *acct_str = screen_name && screen_name->string_ ? screen_name->string_ : "";
 	const char *dname_str = display_name && display_name->string_ ? display_name->string_ : "";
@@ -843,6 +886,11 @@ void stream_event_update_to_msg(sjson_node *jobj_from_string)
 	read_json_fom_path(toot_jobj, "account/avatar", &avatar);
 	if (avatar && avatar->string_)
 		msg.AddString("avatar_url", avatar->string_);
+	
+	if (in_reply_to_account_id && in_reply_to_account_id->string_)
+		msg.AddString("in_reply_to_account_id", in_reply_to_account_id->string_);
+	if (id_node && id_node->string_)
+		msg.AddString("account_id", id_node->string_);
 	
 	struct sjson_node *id;
 	read_json_fom_path(toot_jobj, "id", &id);
