@@ -166,67 +166,7 @@ static void* fetch_status_thread(void* arg) {
 		if(jobj) {
 			BMessage msg(DETAIL_MSG);
 			status_json_to_msg(&msg, jobj);
-#if 0
-			sjson_node *content, *screen_name, *display_name, *created_at, *visibility, *id, *id_node, *in_reply_to_account_id;
-			const char *account = NULL, *dname = NULL, *vstr = NULL, *status_id = NULL;
-			struct tm tm;
-			time_t time;
-			char datebuf[40];
-			char short_datebuf[10];
-			
-			read_json_fom_path(jobj, "content", &content);
-			read_json_fom_path(jobj, "account/acct", &screen_name);
-			read_json_fom_path(jobj, "account/display_name", &display_name);
-			read_json_fom_path(jobj, "account/id", &id_node);
-			read_json_fom_path(jobj, "in_reply_to_account_id", &in_reply_to_account_id);
-			read_json_fom_path(jobj, "created_at", &created_at);
-			read_json_fom_path(jobj, "visibility", &visibility);
-			read_json_fom_path(jobj, "id", &id);
-			
-			const char *acct_str = screen_name && screen_name->string_ ? screen_name->string_ : "";
-			const char *dname_str = display_name && display_name->string_ ? display_name->string_ : "";
-			const char *id_str = id_node && id_node->string_ ? id_node->string_ : "";
 
-#if 0
-			if (id_str[0]) {
-				pthread_mutex_lock(&g_account_mutex);
-				auto it = g_account_cache.find(id_str);
-				if (it != g_account_cache.end()) {
-					acct_str = it->second.first.c_str();
-					dname_str = it->second.second.c_str();
-				} else {
-					g_account_cache[id_str] = std::make_pair(acct_str, dname_str);
-				}
-				pthread_mutex_unlock(&g_account_mutex);
-			}
-#endif
-
-			account = acct_str;
-			dname = dname_str;
-			if(visibility && visibility->string_) vstr = visibility->string_;
-			if(id && id->string_) status_id = id->string_;
-			if(created_at && created_at->string_) {
-				memset(&tm, 0, sizeof(tm));
-				strptime(created_at->string_, "%Y-%m-%dT%H:%M:%S", &tm);
-				time = timegm(&tm);
-				strftime(datebuf, sizeof(datebuf), "%x(%a) %X", localtime(&time));
-				strftime(short_datebuf, sizeof(short_datebuf), "%m/%d", localtime(&time));
-			}
-			
-		BMessage msg(DETAIL_MSG);
-		if(content && content->string_) msg.AddString("content", content->string_);
-		if(account) msg.AddString("account", account);
-		if(dname && dname[0])
-			msg.AddString("display_name", dname);
-		if(in_reply_to_account_id && in_reply_to_account_id->string_)
-			msg.AddString("in_reply_to_account_id", in_reply_to_account_id->string_);
-		if(id_node && id_node->string_)
-			msg.AddString("account_id", id_node->string_);
-		if(status_id) msg.AddString("id", status_id);
-			if(datebuf[0]) msg.AddString("date", datebuf);
-			if(short_datebuf[0]) msg.AddString("short_date", short_datebuf);
-			if(vstr) msg.AddString("visibility", vstr);
-#endif
 			if(g_main_window_messenger.IsValid()) {
 				g_main_window_messenger.SendMessage(&msg);
 			}
@@ -366,13 +306,16 @@ public:
 
 		std::string context_text = "";
 		if (reblog_screen_name && reblog_screen_name[0]) {
-			context_text = "\xF0\x9F\x9D\x83 ";
+//			context_text = "\xF0\x9F\x94\x83 ";
+			context_text = "\U0001F503 ";
 			context_text += reblog_display_name && reblog_display_name[0] ? reblog_display_name : reblog_screen_name;
+			context_text += " boosted";
 		} else if (in_reply_to_account_id && in_reply_to_account_id[0]) {
 			if (account_id && account_id[0] && strcmp(in_reply_to_account_id, account_id) == 0) {
 				context_text = "Continued thread";
 			} else {
-				context_text = in_reply_to_account_id;
+				context_text = "Replied to ";
+				context_text += in_reply_to_account_id;
 			}
 		}
 
@@ -827,9 +770,6 @@ void add_account_to_cache(sjson_node* id_node, sjson_node *screen_name, sjson_no
 	pthread_mutex_unlock(&g_account_mutex);
 }
 
-// If it is a reblog toot, jobj_from_string include the "reblog" part while reblog_obje is the whole json.
-// If it is a plain toot, jobj_from_string is the toot and reblog_obj is NULL.
-// In any case, the jobj_from_string is the toot to display content. 
 void status_json_to_msg(BMessage *msg, sjson_node *jobj_from_string)
 {
 	sjson_node *toot_jobj = jobj_from_string;
