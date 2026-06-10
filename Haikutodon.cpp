@@ -48,6 +48,7 @@ static pthread_mutex_t g_avatar_mutex = PTHREAD_MUTEX_INITIALIZER;
 static std::map<std::string, std::pair<std::string, std::string>> g_account_cache;
 static pthread_mutex_t g_account_mutex = PTHREAD_MUTEX_INITIALIZER;
 static BMessenger g_main_window_messenger;
+void status_json_to_msg(BMessage *msg, sjson_node *jobj_from_string);;
 
 // Callback for curl to write data into memory
 struct MemoryStruct {
@@ -163,6 +164,9 @@ static void* fetch_status_thread(void* arg) {
 		struct sjson_node *jobj = sjson_decode(ctx, chunk.memory);
 		
 		if(jobj) {
+			BMessage msg(DETAIL_MSG);
+			status_json_to_msg(&msg, jobj);
+#if 0
 			sjson_node *content, *screen_name, *display_name, *created_at, *visibility, *id, *id_node, *in_reply_to_account_id;
 			const char *account = NULL, *dname = NULL, *vstr = NULL, *status_id = NULL;
 			struct tm tm;
@@ -183,6 +187,7 @@ static void* fetch_status_thread(void* arg) {
 			const char *dname_str = display_name && display_name->string_ ? display_name->string_ : "";
 			const char *id_str = id_node && id_node->string_ ? id_node->string_ : "";
 
+#if 0
 			if (id_str[0]) {
 				pthread_mutex_lock(&g_account_mutex);
 				auto it = g_account_cache.find(id_str);
@@ -194,6 +199,7 @@ static void* fetch_status_thread(void* arg) {
 				}
 				pthread_mutex_unlock(&g_account_mutex);
 			}
+#endif
 
 			account = acct_str;
 			dname = dname_str;
@@ -220,7 +226,7 @@ static void* fetch_status_thread(void* arg) {
 			if(datebuf[0]) msg.AddString("date", datebuf);
 			if(short_datebuf[0]) msg.AddString("short_date", short_datebuf);
 			if(vstr) msg.AddString("visibility", vstr);
-			
+#endif
 			if(g_main_window_messenger.IsValid()) {
 				g_main_window_messenger.SendMessage(&msg);
 			}
@@ -358,9 +364,10 @@ public:
 		dateView->SetExplicitMaxSize(BSize(100, 60));
 		dateView->SetExplicitMinSize(BSize(100, 60));
 
-		const char* context_text = "";
+		std::string context_text = "";
 		if (reblog_screen_name && reblog_screen_name[0]) {
-			context_text = reblog_screen_name;
+			context_text = "\xF0\x9F\x9D\x83 ";
+			context_text += reblog_display_name && reblog_display_name[0] ? reblog_display_name : reblog_screen_name;
 		} else if (in_reply_to_account_id && in_reply_to_account_id[0]) {
 			if (account_id && account_id[0] && strcmp(in_reply_to_account_id, account_id) == 0) {
 				context_text = "Continued thread";
@@ -369,7 +376,7 @@ public:
 			}
 		}
 
-		fContextView = new BStringView("context_view", context_text);
+		fContextView = new BStringView("context_view", context_text.c_str());
 		fContextView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 
 		BView* headerView = BLayoutBuilder::Group<>(B_HORIZONTAL)
@@ -481,9 +488,10 @@ public:
 		dateView->SetExplicitMaxSize(BSize(100, B_SIZE_UNSET));
 		dateView->SetExplicitMinSize(BSize(100, B_SIZE_UNSET));
 
-		const char* context_text = "";
+		std::string context_text = "";
 		if (reblog_screen_name && reblog_screen_name[0]) {
-			context_text = reblog_screen_name;
+			context_text = "\xF0\x9F\x9D\x83 ";
+			context_text += reblog_display_name && reblog_display_name[0] ? reblog_display_name : reblog_screen_name;
 		} else if (in_reply_to_account_id && in_reply_to_account_id[0]) {
 			if (account_id && account_id[0] && strcmp(in_reply_to_account_id, account_id) == 0) {
 				context_text = "Continued thread";
@@ -492,7 +500,7 @@ public:
 			}
 		}
 
-		fContextView = new BStringView("context_view", context_text);
+		fContextView = new BStringView("context_view", context_text.c_str());
 		fContextView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 
 		BView* headerView = BLayoutBuilder::Group<>(B_HORIZONTAL)
@@ -799,15 +807,37 @@ void MainWindow::OnMoreClicked(const std::string& statusId) {
 
 static MainWindow* gMainWindow = NULL;
 
+void add_account_to_cache(sjson_node* id_node, sjson_node *screen_name, sjson_node *display_name)
+{
+	const char *id_str, *acct_str, *dname_str;
+
+	id_str = id_node && id_node->string_ ? id_node->string_ : "";
+	acct_str = screen_name && screen_name->string_ ? screen_name->string_ : "";
+	dname_str = display_name && display_name->string_ ? display_name->string_ : "";
+
+	pthread_mutex_lock(&g_account_mutex);
+	auto it = g_account_cache.find(id_str);
+	if (it != g_account_cache.end()) {
+		// Found
+		// acct_str = it->second.first.c_str();
+		// dname_str = it->second.second.c_str();
+	} else {
+		g_account_cache[id_str] = std::make_pair(acct_str, dname_str);
+	}
+	pthread_mutex_unlock(&g_account_mutex);
+}
+
 // If it is a reblog toot, jobj_from_string include the "reblog" part while reblog_obje is the whole json.
 // If it is a plain toot, jobj_from_string is the toot and reblog_obj is NULL.
 // In any case, the jobj_from_string is the toot to display content. 
-void stream_event_update_to_msg(sjson_node *jobj_from_string)
+void status_json_to_msg(BMessage *msg, sjson_node *jobj_from_string)
 {
 	sjson_node *toot_jobj = jobj_from_string;
+	sjson_node *reblog_account_id, *reblog_screen_name, *reblog_display_name;
 	sjson_node *content, *screen_name, *display_name, *reblog, *visibility;
 	sjson_node *created_at, *id_node, *in_reply_to_account_id;
 	const char *sname, *dname, *vstr;
+	const char *acct_str, *dname_str, *id_str;
 	struct tm tm;
 	time_t time;
 #define DATEBUFLEN 40
@@ -817,34 +847,48 @@ void stream_event_update_to_msg(sjson_node *jobj_from_string)
 
 	if(!toot_jobj) return;
 
+	read_json_fom_path(toot_jobj, "account/id", &id_node);
+	read_json_fom_path(toot_jobj, "account/acct", &screen_name);
+	read_json_fom_path(toot_jobj, "account/display_name", &display_name);
+	read_json_fom_path(toot_jobj, "in_reply_to_account_id", &in_reply_to_account_id);
+
+	if (id_node && id_node->string_) {
+		add_account_to_cache(id_node, screen_name, display_name);
+	}
+
+	read_json_fom_path(toot_jobj, "reblog", &reblog);
+
+	// Check reblog
+	sjson_tag type;
+
+	type = reblog->tag;
+
+	// ブーストで回ってきた場合はその旗を表示
+	if(type != SJSON_NULL) {
+		if (screen_name && screen_name->string_) {
+			msg->AddString("reblog_screen_name", screen_name->string_);
+		}
+		if (display_name && display_name->string_) {
+			msg->AddString("reblog_display_name", display_name->string_);
+		}
+
+		toot_jobj = reblog;
+
+		// Get real account for toot, not the reblog.
+		read_json_fom_path(toot_jobj, "account/id", &id_node);
+		read_json_fom_path(toot_jobj, "account/acct", &screen_name);
+		read_json_fom_path(toot_jobj, "account/display_name", &display_name);
+
+		if (id_node && id_node->string_) {
+			add_account_to_cache(id_node, screen_name, display_name);
+		}
+	}
+
 	read_json_fom_path(toot_jobj, "account/avatar", &avatar);
 	read_json_fom_path(toot_jobj, "sensitive", &sensitive);
 
 	read_json_fom_path(toot_jobj, "content", &content);
-	read_json_fom_path(toot_jobj, "account/acct", &screen_name);
-	read_json_fom_path(toot_jobj, "account/display_name", &display_name);
-	read_json_fom_path(toot_jobj, "account/id", &id_node);
-	read_json_fom_path(toot_jobj, "in_reply_to_account_id", &in_reply_to_account_id);
 
-	const char *acct_str = screen_name && screen_name->string_ ? screen_name->string_ : "";
-	const char *dname_str = display_name && display_name->string_ ? display_name->string_ : "";
-	const char *id_str = id_node && id_node->string_ ? id_node->string_ : "";
-
-	if (id_str[0]) {
-		pthread_mutex_lock(&g_account_mutex);
-		auto it = g_account_cache.find(id_str);
-		if (it != g_account_cache.end()) {
-			acct_str = it->second.first.c_str();
-			dname_str = it->second.second.c_str();
-		} else {
-			g_account_cache[id_str] = std::make_pair(acct_str, dname_str);
-		}
-		pthread_mutex_unlock(&g_account_mutex);
-	}
-
-	sname = acct_str;
-	dname = dname_str;
-	read_json_fom_path(toot_jobj, "reblog", &reblog);
 	read_json_fom_path(toot_jobj, "created_at", &created_at);
 	read_json_fom_path(toot_jobj, "visibility", &visibility);
 	memset(&tm, 0, sizeof(tm));
@@ -855,63 +899,42 @@ void stream_event_update_to_msg(sjson_node *jobj_from_string)
 
 	vstr = visibility->string_;
 
-	sbctx_t sb;
-	sbctx_t *sbctx = &sb;
-
-	ninitbuf(&sb);
-
-	// Create BMessage with structured toot data
-	BMessage msg(TOOT_MSG);
-
-	// Check reblog
-	sjson_tag type;
-
-	type = reblog->tag;
-
-	// ブーストで回ってきた場合はその旗を表示
-	if(type != SJSON_NULL) {
-		msg.AddString("reblog_screen_name", sname);
-		msg.AddString("reblog_display_name", dname);
-		toot_jobj = reblog;
-	}
-
-	msg.AddString("raw", sb.buf);
-	if (acct_str[0])
-		msg.AddString("account", acct_str);
-	if (dname_str[0])
-		msg.AddString("display_name", dname_str);
+	if (id_node && id_node->string_)
+		msg->AddString("account_id", id_node->string_);
+	if (screen_name && screen_name->string_)
+		msg->AddString("account", screen_name->string_);
+	if (display_name && display_name->string_)
+		msg->AddString("display_name", display_name->string_);
 	if (content && content->string_)
-		msg.AddString("content", content->string_);
+		msg->AddString("content", content->string_);
 	if (created_at && created_at->string_)
-		msg.AddString("created_at", created_at->string_);
+		msg->AddString("created_at", created_at->string_);
 	if (visibility && vstr)
-		msg.AddString("visibility", vstr);
+		msg->AddString("visibility", vstr);
 	if (datebuf && datebuf[0])
-		msg.AddString("date", datebuf);
+		msg->AddString("date", datebuf);
 	if (short_datebuf && short_datebuf[0])
-		msg.AddString("short_date", short_datebuf);
+		msg->AddString("short_date", short_datebuf);
 
 	read_json_fom_path(toot_jobj, "account/avatar", &avatar);
 	if (avatar && avatar->string_)
-		msg.AddString("avatar_url", avatar->string_);
+		msg->AddString("avatar_url", avatar->string_);
 	
 	if (in_reply_to_account_id && in_reply_to_account_id->string_)
-		msg.AddString("in_reply_to_account_id", in_reply_to_account_id->string_);
-	if (id_node && id_node->string_)
-		msg.AddString("account_id", id_node->string_);
+		msg->AddString("in_reply_to_account_id", in_reply_to_account_id->string_);
 	
 	struct sjson_node *id;
 	read_json_fom_path(toot_jobj, "id", &id);
 	if (id && id->string_)
-		msg.AddString("id", id->string_);
-	
-	queue_message(&msg);
+		msg->AddString("id", id->string_);
 }
 
 void stream_event_update(sjson_node *jobj_from_string)
 {
 	// Create BMessage with structured toot data and queue it
-	stream_event_update_to_msg(jobj_from_string);
+	BMessage msg(TOOT_MSG);
+	status_json_to_msg(&msg, jobj_from_string);
+	queue_message(&msg);
 	return;
 
 	sjson_node *content, *screen_name, *display_name, *reblog, *visibility;
@@ -1197,6 +1220,7 @@ void stream_event_notify(struct sjson_node *jobj_from_string)
 	const char *dname_str = display_name && display_name->string_ ? display_name->string_ : "";
 	const char *id_str = id_node && id_node->string_ ? id_node->string_ : "";
 
+#if 0
 	if (id_str[0]) {
 		pthread_mutex_lock(&g_account_mutex);
 		auto it = g_account_cache.find(id_str);
@@ -1208,6 +1232,7 @@ void stream_event_notify(struct sjson_node *jobj_from_string)
 		}
 		pthread_mutex_unlock(&g_account_mutex);
 	}
+#endif
 
 	sbctx_t sb;
 	sbctx_t *sbctx = &sb;
