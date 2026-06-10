@@ -37,6 +37,7 @@
 enum {
 	TOOT_MSG = 'toot',
 	AVATAR_DOWNLOADED = 'avdl',
+	ACCOUNT_FETCHED = 'acct',
 	POST_WINDOW_MSG = 'post',
 	MORE_BUTTON_MSG = 'more',
 	DETAIL_MSG = 'detl'
@@ -49,6 +50,7 @@ static std::map<std::string, std::pair<std::string, std::string>> g_account_cach
 static pthread_mutex_t g_account_mutex = PTHREAD_MUTEX_INITIALIZER;
 static BMessenger g_main_window_messenger;
 void status_json_to_msg(BMessage *msg, sjson_node *jobj_from_string);;
+void add_account_to_cache(sjson_node* id_node, sjson_node *screen_name, sjson_node *display_name);
 
 // Callback for curl to write data into memory
 struct MemoryStruct {
@@ -180,6 +182,64 @@ static void* fetch_status_thread(void* arg) {
 	return NULL;
 }
 
+static void* fetch_account_thread(void* arg) {
+	std::string* accountId = (std::string*)arg;
+	
+	CURL *curl_handle;
+	CURLcode res;
+	struct MemoryStruct chunk;
+	
+	chunk.memory = (char *)malloc(1);
+	chunk.size = 0;
+	
+	char path[256];
+	snprintf(path, sizeof(path), "api/v1/accounts/%s", accountId->c_str());
+	char *uri = create_uri_string(path);
+	struct curl_slist *slist1 = NULL;
+	slist1 = curl_slist_append(slist1, access_token);
+	
+	curl_handle = curl_easy_init();
+	curl_easy_setopt(curl_handle, CURLOPT_URL, uri);
+	curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+	curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+	curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+	curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, slist1);
+	curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl_handle, CURLOPT_TCP_KEEPALIVE, 1L);
+	
+	res = curl_easy_perform(curl_handle);
+	curl_easy_cleanup(curl_handle);
+	curl_slist_free_all(slist1);
+	
+	if(res == CURLE_OK && chunk.size > 0) {
+		sjson_context* ctx = sjson_create_context(0, 0, NULL);
+		struct sjson_node *jobj = sjson_decode(ctx, chunk.memory);
+		
+		if(jobj) {
+			struct sjson_node *acct, *display_name, *id;
+			read_json_fom_path(jobj, "acct", &acct);
+			read_json_fom_path(jobj, "display_name", &display_name);
+			read_json_fom_path(jobj, "id", &id);
+			
+			if (id && id->string_) {
+				add_account_to_cache(id, acct, display_name);
+				
+				if (g_main_window_messenger.IsValid()) {
+					BMessage msg(ACCOUNT_FETCHED);
+					msg.AddString("account_id", id->string_);
+					g_main_window_messenger.SendMessage(&msg);
+				}
+			}
+			
+			sjson_destroy_context(ctx);
+		}
+	}
+	
+	free(chunk.memory);
+	delete accountId;
+	return NULL;
+}
+
 class AvatarView : public BView {
 public:
 	AvatarView(const std::string& url)
@@ -275,6 +335,20 @@ public:
 		}
 	}
 
+	void UpdateContextIfNeeded(const std::string& accountId) {
+		if (fInReplyToAccountId == accountId && fContextView) {
+			pthread_mutex_lock(&g_account_mutex);
+			auto it = g_account_cache.find(accountId);
+			if (it != g_account_cache.end()) {
+				std::string new_text = "Replied to ";
+				new_text += it->second.second;
+				fContextView->SetText(new_text.c_str());
+				fContextView->Show();
+			}
+			pthread_mutex_unlock(&g_account_mutex);
+		}
+	}
+
 	~TootView() {}
 
 	virtual void BuildUI(BMessage *msg) {
@@ -292,6 +366,7 @@ public:
 		fAvatarView = new AvatarView(avatar_url ? avatar_url : "");
 		fAvatarUrl = avatar_url ? avatar_url : "";
 		fStatusId = status_id ? status_id : "";
+		fInReplyToAccountId = in_reply_to_account_id ? in_reply_to_account_id : "";
 
 		BStringView* nameView = new BStringView("name_view", display_name);
 		nameView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
@@ -314,8 +389,13 @@ public:
 			if (account_id && account_id[0] && strcmp(in_reply_to_account_id, account_id) == 0) {
 				context_text = "Continued thread";
 			} else {
-				context_text = "Replied to ";
-				context_text += in_reply_to_account_id;
+				const char* reply_display_name = msg->FindString("in_reply_to_account_display_name");
+				if (reply_display_name && reply_display_name[0]) {
+					context_text = "Replied to ";
+					context_text += reply_display_name;
+				} else {
+					context_text = in_reply_to_account_id;
+				}
 			}
 		}
 
@@ -400,6 +480,7 @@ protected:
 	BTextView* fContentView;
 	AvatarView* fAvatarView;
 	BStringView* fContextView;
+	std::string fInReplyToAccountId;
 };
 
 class FullTootView : public TootView {
@@ -419,6 +500,7 @@ public:
 		fAvatarView = new AvatarView(avatar_url ? avatar_url : "");
 		fAvatarUrl = avatar_url ? avatar_url : "";
 		fStatusId = status_id ? status_id : "";
+		fInReplyToAccountId = in_reply_to_account_id ? in_reply_to_account_id : "";
 
 		BStringView* nameView = new BStringView("name_view", display_name);
 		nameView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
@@ -439,7 +521,13 @@ public:
 			if (account_id && account_id[0] && strcmp(in_reply_to_account_id, account_id) == 0) {
 				context_text = "Continued thread";
 			} else {
-				context_text = in_reply_to_account_id;
+				const char* reply_display_name = msg->FindString("in_reply_to_account_display_name");
+				if (reply_display_name && reply_display_name[0]) {
+					context_text = "Replied to ";
+					context_text += reply_display_name;
+				} else {
+					context_text = in_reply_to_account_id;
+				}
 			}
 		}
 
@@ -666,6 +754,26 @@ public:
 				}
 				break;
 			}
+			case ACCOUNT_FETCHED: {
+				if (LockLooper()) {
+					const char* accountId = message->FindString("account_id");
+					if (accountId) {
+						std::string id(accountId);
+						int32 count = fGroupLayout->CountItems();
+						for (int32 i = 0; i < count; i++) {
+							BLayoutItem* item = fGroupLayout->ItemAt(i);
+							if (item && item->View()) {
+								TootView* tootView = dynamic_cast<TootView*>(item->View());
+								if (tootView) {
+									tootView->UpdateContextIfNeeded(id);
+								}
+							}
+						}
+					}
+					UnlockLooper();
+				}
+				break;
+			}
 			case DETAIL_MSG: {
 				if (LockLooper()) {
 					BGroupLayout *layout = dynamic_cast<BGroupLayout*>(fDetailsView->GetLayout());
@@ -860,8 +968,22 @@ void status_json_to_msg(BMessage *msg, sjson_node *jobj_from_string)
 	if (avatar && avatar->string_)
 		msg->AddString("avatar_url", avatar->string_);
 	
-	if (in_reply_to_account_id && in_reply_to_account_id->string_)
-		msg->AddString("in_reply_to_account_id", in_reply_to_account_id->string_);
+	if (in_reply_to_account_id && in_reply_to_account_id->string_) {
+		const char *reply_id = in_reply_to_account_id->string_;
+		pthread_mutex_lock(&g_account_mutex);
+		auto it = g_account_cache.find(reply_id);
+		if (it != g_account_cache.end()) {
+			msg->AddString("in_reply_to_account_display_name", it->second.second.c_str());
+			msg->AddString("in_reply_to_account_acct", it->second.first.c_str());
+		} else {
+			pthread_t thread;
+			std::string* id_copy = new std::string(reply_id);
+			pthread_create(&thread, NULL, fetch_account_thread, id_copy);
+			pthread_detach(thread);
+		}
+		pthread_mutex_unlock(&g_account_mutex);
+		msg->AddString("in_reply_to_account_id", reply_id);
+	}
 	
 	struct sjson_node *id;
 	read_json_fom_path(toot_jobj, "id", &id);
