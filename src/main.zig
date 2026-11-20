@@ -2,6 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const nanotodon = @import("nanotodon");
+const translated = @import("translated");
 
 pub fn main(init: std.process.Init) !void {
     // Prints to stderr, unbuffered, ignoring potential errors.
@@ -29,6 +30,8 @@ pub fn main(init: std.process.Init) !void {
     try nanotodon.printAnotherMessage(stdout_writer);
 
     try stdout_writer.flush(); // Don't forget to flush!
+
+    _ = translated.c_main();
 }
 
 test "simple test" {

@@ -823,8 +823,12 @@ static void get_timeline(void)
 }
 
 // メイン関数
-int main(int argc, char *argv[])
+//int main(int argc, char *argv[])
+int c_main()
 {
+	int argc = 1;
+	char **argv = 0;
+
 	config.profile_name[0] = 0;
 
 	// オプション解析

@@ -21,6 +21,15 @@ pub fn build(b: *std.Build) void {
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
 
+    // An abstraction to make using translate-c as simple as possible.
+    const Translator = @import("translate_c").Translator;
+    const translate_c = b.dependency("translate_c", .{});
+    const t: Translator = .init(translate_c, .{
+        .c_source_file = b.path("src/headers.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
     // Zig modules are the preferred way of making Zig code available to consumers.
@@ -35,8 +44,7 @@ pub fn build(b: *std.Build) void {
         // intend to expose to consumers that were defined in other files part
         // of this module, you will have to make sure to re-export them from
         // the root file.
-        //.root_source_file = b.path("src/root.zig"),
-        .root_source_file = null,
+        .root_source_file = b.path("src/root.zig"),
         // Later on we'll use this module as the root module of a test executable
         // which requires us to specify a target.
         .target = target,
@@ -79,8 +87,7 @@ pub fn build(b: *std.Build) void {
             // b.createModule defines a new module just like b.addModule but,
             // unlike b.addModule, it does not expose the module to consumers of
             // this package, which is why in this case we don't have to give it a name.
-            // .root_source_file = b.path("src/main.zig"),
-            .root_source_file = null,
+            .root_source_file = b.path("src/main.zig"),
             // Target and optimization levels must be explicitly wired in when
             // defining an executable or library (in the root module), and you
             // can also hardcode a specific target for an executable or library
@@ -96,11 +103,13 @@ pub fn build(b: *std.Build) void {
                 // can be extremely useful in case of collisions (which can happen
                 // importing modules from different packages).
                 .{ .name = "nanotodon", .module = mod },
+                .{ .name = "translated", .module = t.mod },
             },
             .link_libc = true,
         }),
     });
 
+    //    exe.root_module.addImport("translated", t.mod);
     exe.root_module.linkSystemLibrary("curl", .{});
 
     // This declares intent for the executable to be installed into the
