@@ -1,3 +1,17 @@
+# zig
+.zig-cache/
+zig-out
+zig-pkg
+
+# Makefile
+nanotodon
+
+# misc
+*.db
+*.swp
+*.sh
+*.pem
+
 # Prerequisites
 *.d
 
