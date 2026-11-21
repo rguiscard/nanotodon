@@ -1,21 +1,18 @@
 const std = @import("std");
 const Io = std.Io;
 
-const nanotodon = @import("nanotodon");
 const translated = @import("translated");
+const cli = @import("cli.zig");
 
 pub fn main(init: std.process.Init) !void {
-    // Prints to stderr, unbuffered, ignoring potential errors.
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-
     // This is appropriate for anything that lives as long as the process.
     const arena: std.mem.Allocator = init.arena.allocator();
 
-    // Accessing command line arguments:
-    const args = try init.minimal.args.toSlice(arena);
-    for (args) |arg| {
-        std.log.info("arg: {s}", .{arg});
-    }
+    // Command line as an iterator: `next()` is infallible, and on POSIX this
+    // allocates nothing (it walks the startup argv). `deinit()` only matters
+    // on Windows/WASI, but call it unconditionally.
+    var arg_it = try init.minimal.args.iterateAllocator(arena);
+    defer arg_it.deinit();
 
     // In order to do I/O operations need an `Io` instance.
     const io = init.io;
@@ -27,11 +24,41 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
 
-    try nanotodon.printAnotherMessage(stdout_writer);
+    // Option handling lives on the Zig side now. The C implementation used to
+    // `return -1` from c_main() on bad arguments, which the shell reports as
+    // 255, so keep that exit status.
+    const opts = cli.parse(&arg_it, stdout_writer) catch |err| {
+        try stdout_writer.flush();
+        switch (err) {
+            // These were already reported to stderr by cli.parse().
+            error.TooFewArguments, error.UnknownTimeline, error.ProfileTooLong => {},
+            else => std.debug.print("nanotodon: {s}\n", .{@errorName(err)}),
+        }
+        std.process.exit(255);
+    };
 
-    try stdout_writer.flush(); // Don't forget to flush!
+    // c_main() writes through libc stdio, which buffers independently of our
+    // writer. Flush first so the option messages keep their order relative to
+    // the C output.
+    try stdout_writer.flush();
 
-    _ = translated.c_main();
+    // Must happen before c_main(): it fills the globals C reads from its
+    // threads and sets config.profile_name before nano_config_init() runs.
+    // It also copies the profile name out of the iterator's storage, so it has
+    // to run while `arg_it` is still alive (deinit is deferred to the end).
+    cli.apply(opts);
+
+    const rc = translated.c_main();
+    if (rc != 0) std.process.exit(@intCast(rc & 0xff));
+}
+
+// `cli` is only referenced from main(), and main() is not analyzed in a test
+// build, so without an explicit reference the tests in src/cli.zig would never
+// be collected. Also forces analysis of `apply()`, which only runs in the real
+// executable otherwise.
+test {
+//    _ = cli;
+    std.testing.refAllDecls(cli);
 }
 
 test "simple test" {

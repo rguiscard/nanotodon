@@ -19,6 +19,7 @@
 #include "squeue.h"
 #include "utils.h"
 #include "sixel.h"
+#include "src/headers.h"
 
 static char *streaming_json = NULL;
 
@@ -822,72 +823,39 @@ static void get_timeline(void)
 	slist1 = NULL;
 }
 
-// メイン関数
-//int main(int argc, char *argv[])
-int c_main()
+// CLIオプションを反映する(src/cli.zig から c_main() の前に一度だけ呼ばれる)
+void nanotodon_apply_cli_options(const struct nanotodon_cli_options *o)
 {
-	int argc = 1;
-	char **argv = 0;
+	monoflag = o->mono ? 1 : 0;
+	hidlckflag = o->unlock ? 0 : 1;
+	noemojiflag = o->no_emoji ? 1 : 0;
 
 	config.profile_name[0] = 0;
-
-	// オプション解析
-	for(int i=1;i<argc;i++) {
-		if(!strcmp(argv[i],"-mono")) {
-			monoflag = 1;
-			printf("Monochrome mode.\n");
-		} else if(!strcmp(argv[i],"-unlock")) {
-			hidlckflag = 0;
-			printf("Show DIRECT and PRIVATE.\n");
-		} else if(!strcmp(argv[i],"-noemoji")) {
-			noemojiflag = 1;
-			printf("Hide UI emojis.\n");
-		} else if(!strncmp(argv[i],"-profile",8)) {
-			i++;
-			if(i >= argc) {
-				fprintf(stderr,"too few argments\n");
-				return -1;
-			} else {
-				strcpy(config.profile_name,argv[i]);
-				printf("Using profile: %s\n", config.profile_name);
-			}
-		} else if(!strncmp(argv[i],"-tllimit",8)) {
-			i++;
-			if(i >= argc) {
-				fprintf(stderr,"too few argments\n");
-				return -1;
-			} else {
-				limit_timeline = atoi(argv[i]);
-				if(limit_timeline < 0) limit_timeline = 0;
-				if(limit_timeline > 40) limit_timeline = 40;
-				printf("Timeline limit: %d\n", limit_timeline);
-			}
-		} else if(!strncmp(argv[i],"-timeline",9)) {
-			i++;
-			if(i >= argc) {
-				fprintf(stderr,"too few argments\n");
-				return -1;
-			} else {
-				if(!strcmp(argv[i],"home")) {
-
-				} else if(!strcmp(argv[i],"local")) {
-					selected_stream = "public/local";
-					selected_timeline = "public?local=true";
-				} else if(!strcmp(argv[i],"public")) {
-					selected_stream = "public";
-					selected_timeline = "public?local=false";
-				} else {
-					fprintf(stderr,"Unknown timeline %s\n", argv[i]);
-					return -1;
-				}
-
-				printf("Using timeline: %s\n", selected_stream);
-			}
-		} else {
-			fprintf(stderr,"Unknown Option %s\n", argv[i]);
-		}
+	if(o->profile) {
+		snprintf(config.profile_name, sizeof(config.profile_name), "%s", o->profile);
 	}
 
+	if(o->limit_timeline >= 0) {
+		limit_timeline = o->limit_timeline;
+	}
+
+	switch(o->timeline) {
+	case NANOTODON_TIMELINE_LOCAL:
+		selected_stream = "public/local";
+		selected_timeline = "public?local=true";
+		break;
+	case NANOTODON_TIMELINE_PUBLIC:
+		selected_stream = "public";
+		selected_timeline = "public?local=false";
+		break;
+	default: // NANOTODON_TIMELINE_HOME: 既定値のまま
+		break;
+	}
+}
+
+// メイン関数
+int c_main()
+{
 	nano_config_init(&config);
 
 	char *env_lang = getenv("LANG");
