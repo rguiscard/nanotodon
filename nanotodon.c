@@ -6,8 +6,6 @@
 #include <time.h>   // strptime, strptime, timegm, localtime
 #include <ctype.h>  // isspace
 #include <locale.h> // setlocale
-#include <sys/time.h>
-#include <pthread.h>
 
 #define SJSON_IMPLEMENT
 #include "sjson.h"
@@ -32,9 +30,6 @@ static char append_timeline[64];
 static int limit_timeline = 20;
 
 #define CURL_USERAGENT "curl/" LIBCURL_VERSION
-
-// イベントループ(src/loop.zig)はここで起動したスレッドと協調する
-static pthread_t stream_thread;
 
 // ストリーミングを受信する関数のポインタ
 static void (*streaming_received_handler)(void);
@@ -485,8 +480,8 @@ static void streaming_received(void)
 	streaming_json = NULL;
 }
 
-// ストリーミング受信スレッド
-static void *stream_thread_func(void *param)
+// ストリーミング受信ループ。ブロックするので、スレッドは src/main.zig が起動する。
+void nanotodon_stream_loop(void)
 {
 	get_timeline();
 
@@ -531,8 +526,6 @@ static void *stream_thread_func(void *param)
 	free(uri);
 	curl_slist_free_all(slist1);
 	slist1 = NULL;
-
-	return NULL;
 }
 
 // インスタンスにクライアントを登録する
@@ -738,7 +731,7 @@ static void get_timeline(void)
 	slist1 = NULL;
 }
 
-// CLIオプションを反映する(src/cli.zig から nanotodon_start() の前に一度だけ呼ばれる)
+// CLIオプションを反映する(src/cli.zig から nanotodon_init() の前に一度だけ呼ばれる)
 void nanotodon_apply_cli_options(const struct nanotodon_cli_options *o)
 {
 	monoflag = o->mono ? 1 : 0;
@@ -901,8 +894,9 @@ void nanotodon_init_dirs(void)
 	nano_config_init_dirs(&config);
 }
 
-// ランタイムを起動する。待ち受けループ本体は src/loop.zig にある。
-int nanotodon_start(void)
+// ランタイムを初期化する。待ち受けループ本体は src/loop.zig、
+// ストリーミングのスレッドは src/main.zig が起動する。
+void nanotodon_init(void)
 {
 	// libcurl の遅延初期化はスレッドセーフではないので、スレッド生成前に済ませる
 	curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -917,11 +911,6 @@ int nanotodon_start(void)
 #ifdef USE_SIXEL
 	sixel_init();
 #endif
-
-	// ストリーミングスレッド生成
-	pthread_create(&stream_thread, NULL, stream_thread_func, NULL);
-
-	return 0;
 }
 
 // ---- src/server.zig から呼ばれるフック ----

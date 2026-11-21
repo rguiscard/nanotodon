@@ -2,7 +2,11 @@
 // This file is the only translate-c input (see build.zig), so it has to stay
 // self-contained: plain C declarations, no #include of project headers.
 
-int nanotodon_start(void);
+void nanotodon_init(void);
+
+// Runs the blocking streaming loop (curl SSE). Blocking, so src/main.zig starts
+// it on its own thread; it never returns unless the process dies.
+void nanotodon_stream_loop(void);
 
 // Creates the config directories (root_dir/cache_dir) without computing the
 // token/domain paths, so main() can call it before binding the socket.
@@ -28,7 +32,7 @@ void nanotodon_pump_output(void);
 int nanotodon_post_toot(const char *status, int status_len, int visibility, char *errbuf, int errlen);
 
 // Command line options. Parsed in Zig (src/cli.zig), then handed over with a
-// single call to nanotodon_apply_cli_options() before nanotodon_start() runs.
+// single call to nanotodon_apply_cli_options() before nanotodon_init() runs.
 typedef struct nanotodon_cli_options {
 	int mono;             // -mono
 	int unlock;           // -unlock

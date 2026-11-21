@@ -46,10 +46,11 @@ pub fn main(init: std.process.Init) !void {
     // to the C output.
     try stdout_writer.flush();
 
-    // Must happen before nanotodon_start(): it fills the globals C reads from
-    // its threads and sets config.profile_name before nano_config_init() runs.
-    // It also copies the profile name out of the iterator's storage, so it has
-    // to run while `arg_it` is still alive (deinit is deferred to the end).
+    // Must happen before nanotodon_init(): it fills the globals C reads from
+    // the streaming thread and sets config.profile_name before
+    // nano_config_init() runs. It also copies the profile name out of the
+    // iterator's storage, so it has to run while `arg_it` is still alive
+    // (deinit is deferred to the end).
     cli.apply(opts);
 
     // Create root_dir/cache_dir now (the same directories nano_config_init()
@@ -92,18 +93,38 @@ pub fn main(init: std.process.Init) !void {
     };
     std.debug.print("listening on {s}\n", .{socket_path});
 
-    // Config, access token, locale, and the stream/prompt pthreads. The event
-    // loop itself is Zig now (src/loop.zig) and never returns.
-    if (translated.nanotodon_start() != 0) std.process.exit(1);
+    // Config, access token, locale and the queue. No threads yet: the two
+    // blocking loops below are started here, on real OS threads, rather than
+    // inside C.
+    translated.nanotodon_init();
 
-    // Serve only once the access token is loaded: on first run the setup above
-    // blocks on the OAuth prompt. `acceptLoop` never returns, so the future is
-    // deliberately dropped.
-    _ = io.async(server.Server.acceptLoop, .{&srv});
+    // The stream loop blocks in curl forever, so it must not be an `Io` task:
+    // an `io.async` task would occupy a pool worker permanently and, when
+    // `async_limit` is 0 (single CPU, or `getCpuCount()` failing), would run
+    // inline and never return to this function.
+    const stream_thread = std.Thread.spawn(.{}, streamEntry, .{}) catch |err| {
+        std.debug.print("nanotodon: cannot start the streaming thread: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    stream_thread.detach();
+
+    // Same reasoning for the accept loop. It may start serving before
+    // `loop.run` gets going; replies only depend on curl and the access token.
+    const accept_thread = std.Thread.spawn(.{}, server.Server.acceptLoop, .{&srv}) catch |err| {
+        std.debug.print("nanotodon: cannot start the accept thread: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    accept_thread.detach();
 
     // From here on all stdout writes go through libc stdio via the shims in
     // src/loop.zig; stdout_writer must not be used again.
     try loop.run(io);
+}
+
+/// Plain Zig entry point for `std.Thread.spawn`; the C side only exposes an
+/// extern function, which is awkward to hand to `spawn` directly.
+fn streamEntry() void {
+    translated.nanotodon_stream_loop();
 }
 
 /// Hands a status to C, which posts it with the Mastodon API. Returns null on
