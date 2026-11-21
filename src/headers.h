@@ -9,12 +9,8 @@ int nanotodon_start(void);
 // Idempotent; may exit on a fatal setup error, like nano_config_init().
 void nanotodon_init_dirs(void);
 
-// Hooks called by the Zig event loop (src/loop.zig).
+// Hook called by the Zig render loop (src/loop.zig).
 void nanotodon_pump_output(void);
-int  nanotodon_prompt_pending(void);
-int  nanotodon_read_toot(char *buf, int size);
-void nanotodon_post_status(const char *status);
-void nanotodon_prompt_clear(void);
 
 #define NANOTODON_TIMELINE_HOME   0
 #define NANOTODON_TIMELINE_LOCAL  1

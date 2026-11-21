@@ -33,12 +33,8 @@ static int limit_timeline = 20;
 
 #define CURL_USERAGENT "curl/" LIBCURL_VERSION
 
-static pthread_mutex_t prompt_mutex;
-static int prompt_notify = 0;
-
 // イベントループ(src/loop.zig)はここで起動したスレッドと協調する
 static pthread_t stream_thread;
-static pthread_t prompt_thread;
 
 // ストリーミングを受信する関数のポインタ
 static void (*streaming_received_handler)(void);
@@ -54,9 +50,6 @@ static void get_timeline(void);
 
 // 承認コードを使ったOAuth処理
 static void do_oauth(char *, char *, char *);
-
-// Tootを行う
-static void do_toot(char *);
 
 // アクセストークンとドメインを用意する
 static void setup_access_token(void);
@@ -542,24 +535,6 @@ static void *stream_thread_func(void *param)
 	return NULL;
 }
 
-static void *prompt_thread_func(void *param)
-{
-	while(1) {
-		if(prompt_notify == 0) {
-			int c = fgetc(stdin);
-
-			if(c == '\n') {
-				prompt_notify = 1;
-			}
-		} else {
-			const struct timespec req = {0, 100 * 1000000};
-			nanosleep(&req, NULL);
-		}
-	}
-
-	return NULL;
-}
-
 // インスタンスにクライアントを登録する
 static void do_create_client(char *domain, char *dot_ckcs)
 {
@@ -669,73 +644,6 @@ static void do_oauth(char *code, char *ck, char *cs)
 	curl_easy_cleanup(hnd);
 	hnd = NULL;
 	free(uri);
-}
-
-// Tootを行う
-static void do_toot(char *s)
-{
-	CURLcode ret;
-	CURL *hnd;
-	curl_mime *mime;
-	curl_mimepart *part;
-	struct curl_slist *slist1;
-	char errbuf[CURL_ERROR_SIZE], *uri;
-
-	int is_locked = 0;
-	int is_unlisted = 0;
-
-	if(*s == '/') {
-		if(s[1] != 0) {
-			if(s[1] == '/') {
-				s++;
-			} else if(strncmp(s+1,"private",7) == 0) {
-				is_locked = 1;
-				s += 1+7;
-			} else if(strncmp(s+1,"unlisted",8) == 0) {
-				is_unlisted = 1;
-				s += 1+8;
-			}
-		}
-	}
-
-	FILE *f = fopen("/dev/null", "wb");
-
-	uri = create_uri_string("api/v1/statuses");
-
-	memset(errbuf, 0, sizeof errbuf);
-	slist1 = NULL;
-	slist1 = curl_slist_append(slist1, access_token);
-
-	hnd = curl_easy_init();
-	mime = curl_mime_init(hnd);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "status");
-	curl_mime_data(part, s, CURL_ZERO_TERMINATED);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "visibility");
-	curl_mime_data(part, is_locked ? "private" : (is_unlisted ? "unlisted" : "public"), CURL_ZERO_TERMINATED);
-	curl_easy_setopt(hnd, CURLOPT_URL, uri);
-	curl_easy_setopt(hnd, CURLOPT_NOPROGRESS, 1L);
-	curl_easy_setopt(hnd, CURLOPT_MIMEPOST, mime);
-	curl_easy_setopt(hnd, CURLOPT_USERAGENT, CURL_USERAGENT);
-	curl_easy_setopt(hnd, CURLOPT_HTTPHEADER, slist1);
-	curl_easy_setopt(hnd, CURLOPT_MAXREDIRS, 50L);
-	curl_easy_setopt(hnd, CURLOPT_TCP_KEEPALIVE, 1L);
-	curl_easy_setopt(hnd, CURLOPT_WRITEDATA, f);
-	curl_easy_setopt(hnd, CURLOPT_ERRORBUFFER, errbuf);
-
-	ret = curl_easy_perform(hnd);
-	if(ret != CURLE_OK) curl_fatal(ret, errbuf);
-
-	fclose(f);
-
-	curl_mime_free(mime);
-	mime = NULL;
-	curl_easy_cleanup(hnd);
-	hnd = NULL;
-	free(uri);
-	curl_slist_free_all(slist1);
-	slist1 = NULL;
 }
 
 // curlから呼び出されるHTL受信関数
@@ -1005,7 +913,6 @@ int nanotodon_start(void)
 
 	setlocale(LC_ALL, "");
 
-	pthread_mutex_init(&prompt_mutex, NULL);
 	squeue_init();
 #ifdef USE_SIXEL
 	sixel_init();
@@ -1013,14 +920,13 @@ int nanotodon_start(void)
 
 	// ストリーミングスレッド生成
 	pthread_create(&stream_thread, NULL, stream_thread_func, NULL);
-	pthread_create(&prompt_thread, NULL, prompt_thread_func, NULL);
 
 	return 0;
 }
 
 // ---- src/server.zig から呼ばれるフック ----
 
-// Tootを投稿する。/private /unlisted のプレフィックス解釈はしない(可視性は引数で来る)。
+// Tootを投稿する。可視性は引数で受けとる。
 // curl_fatal() と違って失敗してもプロセスを終了しない。
 int nanotodon_post_toot(const char *status, int status_len, int visibility, char *errbuf, int errlen)
 {
@@ -1096,35 +1002,4 @@ void nanotodon_pump_output(void)
 		fwrite(sb.buf, sb.bufptr, 1, stdout);
 		free(sb.buf);
 	}
-}
-
-// プロンプト(prompt_thread)からの通知が来ているか
-int nanotodon_prompt_pending(void)
-{
-	return prompt_notify != 0;
-}
-
-// "> " を出して1行読む。EOF なら 0 を返す。
-int nanotodon_read_toot(char *buf, int size)
-{
-	fputs("> ", stdout);
-	// 行バッファリングだと "\n" が来るまで出ないので明示的に流す
-	fflush(stdout);
-
-	if(!fgets(buf, size, stdin)) return 0;
-
-	return 1;
-}
-
-// Tootを投稿する
-void nanotodon_post_status(const char *status)
-{
-	// do_toot() は内容を書き換えないが、引数が const でない
-	do_toot((char *)status);
-}
-
-// プロンプト通知をクリアする
-void nanotodon_prompt_clear(void)
-{
-	prompt_notify = 0;
 }
