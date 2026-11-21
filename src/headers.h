@@ -2,14 +2,21 @@
 // This file is the only translate-c input (see build.zig), so it has to stay
 // self-contained: plain C declarations, no #include of project headers.
 
-int c_main(void);
+int nanotodon_start(void);
+
+// Hooks called by the Zig event loop (src/loop.zig).
+void nanotodon_pump_output(void);
+int  nanotodon_prompt_pending(void);
+int  nanotodon_read_toot(char *buf, int size);
+void nanotodon_post_status(const char *status);
+void nanotodon_prompt_clear(void);
 
 #define NANOTODON_TIMELINE_HOME   0
 #define NANOTODON_TIMELINE_LOCAL  1
 #define NANOTODON_TIMELINE_PUBLIC 2
 
 // Command line options. Parsed in Zig (src/cli.zig), then handed over with a
-// single call to nanotodon_apply_cli_options() before c_main() runs.
+// single call to nanotodon_apply_cli_options() before nanotodon_start() runs.
 typedef struct nanotodon_cli_options {
 	int mono;             // -mono
 	int unlock;           // -unlock

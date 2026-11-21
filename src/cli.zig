@@ -5,10 +5,10 @@
 //! `nanotodon_apply_cli_options()` (see src/headers.h), so C keeps ownership
 //! of its static string literals and of `config.profile_name[256]`.
 //!
-//! `apply()` must run before `c_main()`: the C side reads these globals while
-//! starting its streaming/prompt threads, and `c_main()` calls
-//! `nano_config_init()` right at the top, which needs `profile_name` already
-//! set.
+//! `apply()` must run before `nanotodon_start()`: the C side reads these
+//! globals while starting its streaming/prompt threads, and `nanotodon_start()`
+//! calls `nano_config_init()` right at the top, which needs `profile_name`
+//! already set.
 
 const std = @import("std");
 const translated = @import("translated");
@@ -113,8 +113,8 @@ pub fn parse(it: anytype, writer: ?*std.Io.Writer) Error!Options {
 
 /// Copy the parsed options into the C side.
 ///
-/// Must be called exactly once, before `translated.c_main()`. The profile
-/// pointer handed to C refers to `profile_buf`, which is static so its
+/// Must be called exactly once, before `translated.nanotodon_start()`. The
+/// profile pointer handed to C refers to `profile_buf`, which is static so its
 /// lifetime covers the whole process.
 pub fn apply(opts: Options) void {
     var c_opts: C_Options = .{

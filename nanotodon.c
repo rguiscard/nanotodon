@@ -36,6 +36,10 @@ static int limit_timeline = 20;
 static pthread_mutex_t prompt_mutex;
 static int prompt_notify = 0;
 
+// イベントループ(src/loop.zig)はここで起動したスレッドと協調する
+static pthread_t stream_thread;
+static pthread_t prompt_thread;
+
 // ストリーミングを受信する関数のポインタ
 static void (*streaming_received_handler)(void);
 
@@ -826,7 +830,7 @@ static void get_timeline(void)
 	slist1 = NULL;
 }
 
-// CLIオプションを反映する(src/cli.zig から c_main() の前に一度だけ呼ばれる)
+// CLIオプションを反映する(src/cli.zig から nanotodon_start() の前に一度だけ呼ばれる)
 void nanotodon_apply_cli_options(const struct nanotodon_cli_options *o)
 {
 	monoflag = o->mono ? 1 : 0;
@@ -982,8 +986,8 @@ retry1:
 	}
 }
 
-// メイン関数
-int c_main()
+// ランタイムを起動する。待ち受けループ本体は src/loop.zig にある。
+int nanotodon_start(void)
 {
 	nano_config_init(&config);
 
@@ -997,56 +1001,53 @@ int c_main()
 	sixel_init();
 #endif
 
-	pthread_t stream_thread;
-	pthread_t prompt_thread;
-
 	// ストリーミングスレッド生成
 	pthread_create(&stream_thread, NULL, stream_thread_func, NULL);
 	pthread_create(&prompt_thread, NULL, prompt_thread_func, NULL);
 
-	while (1)
-	{
-		sbctx_t sb;
-		// queueに来ていたら表示する
-		if(!squeue_dequeue(&sb)) {
-			fwrite(sb.buf, sb.bufptr, 1, stdout);
-			free(sb.buf);
-		}
-
-		// プロンプト通知が来てたらtoot処理
-		if(prompt_notify != 0) {
-			fputs("> ", stdout);
-			char status[1024];
-			fgets(status, 1024, stdin);
-
-			char status2[1024];
-			char *p1 = status, *p2 = status2;
-
-			for(;*p1 != 0; p1++, p2++) {
-				if(*p1 == '\\') {
-					if(p1[1] == '\\') {
-						*p2 = '\\';
-						p1++;
-					}
-					if(p1[1] == 'n') {
-						*p2 = '\n';
-						p1++;
-					}
-				} else {
-					*p2 = *p1;
-				}
-			}
-
-			*p2 = 0;
-
-			do_toot(status2);
-			prompt_notify = 0;
-		} else {
-			// あまり短いと謎マシンが死ぬので100ms
-			const struct timespec req = {0, 100 * 1000000};
-			nanosleep(&req, NULL);
-		}
-	}
-
 	return 0;
+}
+
+// ---- src/loop.zig から呼ばれるフック ----
+
+// queueに溜まった出力を1つ表示する(なければ何もしない)
+void nanotodon_pump_output(void)
+{
+	sbctx_t sb;
+
+	if(!squeue_dequeue(&sb)) {
+		fwrite(sb.buf, sb.bufptr, 1, stdout);
+		free(sb.buf);
+	}
+}
+
+// プロンプト(prompt_thread)からの通知が来ているか
+int nanotodon_prompt_pending(void)
+{
+	return prompt_notify != 0;
+}
+
+// "> " を出して1行読む。EOF なら 0 を返す。
+int nanotodon_read_toot(char *buf, int size)
+{
+	fputs("> ", stdout);
+	// 行バッファリングだと "\n" が来るまで出ないので明示的に流す
+	fflush(stdout);
+
+	if(!fgets(buf, size, stdin)) return 0;
+
+	return 1;
+}
+
+// Tootを投稿する
+void nanotodon_post_status(const char *status)
+{
+	// do_toot() は内容を書き換えないが、引数が const でない
+	do_toot((char *)status);
+}
+
+// プロンプト通知をクリアする
+void nanotodon_prompt_clear(void)
+{
+	prompt_notify = 0;
 }

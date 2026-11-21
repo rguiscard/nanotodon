@@ -3,6 +3,7 @@ const Io = std.Io;
 
 const translated = @import("translated");
 const cli = @import("cli.zig");
+const loop = @import("loop.zig");
 
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
@@ -24,9 +25,9 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
 
-    // Option handling lives on the Zig side now. The C implementation used to
-    // `return -1` from c_main() on bad arguments, which the shell reports as
-    // 255, so keep that exit status.
+    // Option handling lives on the Zig side now. The old C main() used to
+    // `return -1` on bad arguments, which the shell reports as 255, so keep
+    // that exit status.
     const opts = cli.parse(&arg_it, stdout_writer) catch |err| {
         try stdout_writer.flush();
         switch (err) {
@@ -37,28 +38,34 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(255);
     };
 
-    // c_main() writes through libc stdio, which buffers independently of our
-    // writer. Flush first so the option messages keep their order relative to
-    // the C output.
+    // The C runtime writes through libc stdio, which buffers independently of
+    // our writer. Flush first so the option messages keep their order relative
+    // to the C output.
     try stdout_writer.flush();
 
-    // Must happen before c_main(): it fills the globals C reads from its
-    // threads and sets config.profile_name before nano_config_init() runs.
+    // Must happen before nanotodon_start(): it fills the globals C reads from
+    // its threads and sets config.profile_name before nano_config_init() runs.
     // It also copies the profile name out of the iterator's storage, so it has
     // to run while `arg_it` is still alive (deinit is deferred to the end).
     cli.apply(opts);
 
-    const rc = translated.c_main();
-    if (rc != 0) std.process.exit(@intCast(rc & 0xff));
+    // Config, access token, locale, and the stream/prompt pthreads. The event
+    // loop itself is Zig now (src/loop.zig) and never returns.
+    if (translated.nanotodon_start() != 0) std.process.exit(1);
+
+    // From here on all stdout writes go through libc stdio via the shims in
+    // src/loop.zig; stdout_writer must not be used again.
+    try loop.run(io);
 }
 
-// `cli` is only referenced from main(), and main() is not analyzed in a test
-// build, so without an explicit reference the tests in src/cli.zig would never
-// be collected. Also forces analysis of `apply()`, which only runs in the real
-// executable otherwise.
+// `cli` and `loop` are only referenced from main(), and main() is not analyzed
+// in a test build, so without touching them here the tests inside those files
+// would never be collected. refAllDecls also forces analysis of `cli.apply()`,
+// which otherwise only runs in the real executable.
 test {
 //    _ = cli;
     std.testing.refAllDecls(cli);
+    std.testing.refAllDecls(loop);
 }
 
 test "simple test" {
