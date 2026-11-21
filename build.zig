@@ -112,6 +112,19 @@ pub fn build(b: *std.Build) void {
     //    exe.root_module.addImport("translated", t.mod);
     exe.root_module.linkSystemLibrary("curl", .{});
 
+    // The `toot` client: pure Zig, it only talks JSONL over the UNIX socket the
+    // server listens on. No C sources, no curl.
+    const toot = b.addExecutable(.{
+        .name = "toot",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tootctl.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    b.installArtifact(toot);
+
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
     // step). By default the install prefix is `zig-out/` but can be overridden
@@ -162,12 +175,19 @@ pub fn build(b: *std.Build) void {
     // A run step that will run the second test executable.
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
+    // And one for the client, so `zig build test` also compiles it.
+    const toot_tests = b.addTest(.{
+        .root_module = toot.root_module,
+    });
+    const run_toot_tests = b.addRunArtifact(toot_tests);
+
     // A top level step for running all tests. dependOn can be called multiple
     // times and since the two run steps do not depend on one another, this will
     // make the two of them run in parallel.
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_toot_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //

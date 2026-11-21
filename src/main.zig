@@ -4,6 +4,9 @@ const Io = std.Io;
 const translated = @import("translated");
 const cli = @import("cli.zig");
 const loop = @import("loop.zig");
+const proto = @import("proto.zig");
+const server = @import("server.zig");
+const socketpath = @import("socketpath.zig");
 
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
@@ -49,23 +52,90 @@ pub fn main(init: std.process.Init) !void {
     // to run while `arg_it` is still alive (deinit is deferred to the end).
     cli.apply(opts);
 
+    // Create root_dir/cache_dir now (the same directories nano_config_init()
+    // will compute later), because the socket may live there and has to exist
+    // before we bind. This is what made the first run on macOS fail before.
+    translated.nanotodon_init_dirs();
+
+    // Bind before touching the network: a failed bind must exit before reading
+    // a token or running the OAuth dance. Requests queue in the kernel backlog
+    // until the accept loop starts further down.
+    const socket_path = socketpath.resolve(
+        arena,
+        socketpath.Env.fromMap(init.environ_map),
+        opts.socket,
+        opts.profile,
+    ) catch |err| switch (err) {
+        error.NameTooLong => {
+            std.debug.print("nanotodon: socket path too long; pass -socket <path>\n", .{});
+            std.process.exit(1);
+        },
+        error.NoHome => {
+            std.debug.print("nanotodon: no $HOME or $XDG_RUNTIME_DIR for the socket; pass -socket <path>\n", .{});
+            std.process.exit(1);
+        },
+        else => {
+            std.debug.print("nanotodon: cannot build the socket path: {s}\n", .{@errorName(err)});
+            std.process.exit(1);
+        },
+    };
+
+    var srv = server.listen(
+        io,
+        arena,
+        socket_path,
+        .{ .postFn = postStatus },
+        server.default_max_concurrent,
+    ) catch |err| {
+        std.debug.print("nanotodon: cannot listen on {s}: {s}\n", .{ socket_path, @errorName(err) });
+        std.process.exit(1);
+    };
+    std.debug.print("listening on {s}\n", .{socket_path});
+
     // Config, access token, locale, and the stream/prompt pthreads. The event
     // loop itself is Zig now (src/loop.zig) and never returns.
     if (translated.nanotodon_start() != 0) std.process.exit(1);
+
+    // Serve only once the access token is loaded: on first run the setup above
+    // blocks on the OAuth prompt. `acceptLoop` never returns, so the future is
+    // deliberately dropped.
+    _ = io.async(server.Server.acceptLoop, .{&srv});
 
     // From here on all stdout writes go through libc stdio via the shims in
     // src/loop.zig; stdout_writer must not be used again.
     try loop.run(io);
 }
 
-// `cli` and `loop` are only referenced from main(), and main() is not analyzed
-// in a test build, so without touching them here the tests inside those files
-// would never be collected. refAllDecls also forces analysis of `cli.apply()`,
-// which otherwise only runs in the real executable.
+/// Hands a status to C, which posts it with the Mastodon API. Returns null on
+/// success or the error message C wrote into `err_out`.
+fn postStatus(
+    _: ?*anyopaque,
+    status: [:0]const u8,
+    visibility: proto.Visibility,
+    err_out: []u8,
+) ?[]const u8 {
+    const rc = translated.nanotodon_post_toot(
+        status.ptr,
+        @intCast(status.len),
+        @intFromEnum(visibility),
+        err_out.ptr,
+        @intCast(err_out.len),
+    );
+    if (rc == 0) return null;
+    return std.mem.sliceTo(err_out, 0);
+}
+
+// `cli`, `loop`, `server` and `socketpath` are only referenced from main(),
+// which is not analyzed in a test build, so without touching them here the
+// tests inside those files would never be collected. refAllDecls also forces
+// analysis of `cli.apply()`, which otherwise only runs in the real executable.
 test {
 //    _ = cli;
     std.testing.refAllDecls(cli);
     std.testing.refAllDecls(loop);
+    std.testing.refAllDecls(proto);
+    std.testing.refAllDecls(server);
+    std.testing.refAllDecls(socketpath);
 }
 
 test "simple test" {

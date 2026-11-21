@@ -15,6 +15,10 @@ struct nanotodon_config {
 
 int nano_config_init(struct nanotodon_config *);
 
+// 設定ディレクトリ(root_dir, cache_dir)の決定と作成だけを行う。
+// トークン/ドメインファイルのパスは計算しない。
+void nano_config_init_dirs(struct nanotodon_config *);
+
 int nano_config_app_token_filename(struct nanotodon_config *, const char *, char *, size_t);
 
 #endif

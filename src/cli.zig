@@ -37,6 +37,8 @@ pub const Options = struct {
     /// -1 means "not specified": the C default (20) stays in effect.
     limit_timeline: c_int = -1,
     timeline: Timeline = .home,
+    /// `-socket <path>`; when null the path is derived by socketpath.zig.
+    socket: ?[]const u8 = null,
 };
 
 pub const ParseError = error{
@@ -81,6 +83,8 @@ pub fn parse(it: anytype, writer: ?*std.Io.Writer) Error!Options {
             }
             opts.profile = value;
             try info(writer, "Using profile: {s}\n", .{value});
+        } else if (std.mem.eql(u8, arg, "-socket")) {
+            opts.socket = try nextValue(it);
         } else if (std.mem.eql(u8, arg, "-tllimit")) {
             const value = try nextValue(it);
             // atoi() semantics: unparsable input becomes 0, then clamp.
@@ -222,6 +226,15 @@ test "flags" {
 test "profile takes the next argument" {
     const opts = try parseArgv(&.{ "nanotodon", "-profile", "work" });
     try testing.expectEqualStrings("work", opts.profile.?);
+}
+
+test "socket takes the next argument" {
+    const opts = try parseArgv(&.{ "nanotodon", "-socket", "/tmp/x.sock" });
+    try testing.expectEqualStrings("/tmp/x.sock", opts.socket.?);
+}
+
+test "socket without a value is fatal" {
+    try testing.expectError(ParseError.TooFewArguments, parseArgv(&.{ "nanotodon", "-socket" }));
 }
 
 test "profile without a value is fatal" {

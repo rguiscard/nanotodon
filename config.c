@@ -87,7 +87,13 @@ static int init_xdg(struct nanotodon_config *config, const char* xdg_config_home
 }
 #endif
 
-int nano_config_init(struct nanotodon_config *config)
+// 設定ディレクトリを用意する。パス計算(トークン/ドメインファイル)とは分離してあるので、
+// ソケットを bind する前に呼べる。既に存在すれば何もしないので何度呼んでも安全。
+//
+// root_dir の決定順は config.c の従来通り:
+//   $XDG_CONFIG_HOME/nanotodon -> $HOME/.config/nanotodon -> $HOME/.nanotodon
+// (src/socketpath.zig は `toot` からも使うので同じ規則を Zig 側に持っている)
+void nano_config_init_dirs(struct nanotodon_config *config)
 {
 	char *homepath = getenv("HOME");
 
@@ -96,9 +102,16 @@ int nano_config_init(struct nanotodon_config *config)
 	char *xdg_config_home = getenv("XDG_CONFIG_HOME");
 	char *xdg_config_cache = getenv("XDG_CONFIG_CACHE");
 	if (xdg_config_home != NULL && init_xdg(config, xdg_config_home, xdg_config_cache) == MAKE_CONFIG_DIR_OK) {
-		goto makepath;
+		return;
+	}
+#endif
+
+	if (homepath == NULL) {
+		fprintf(stderr, "FATAL: $HOME is not set\n");
+		exit(EXIT_FAILURE);
 	}
 
+#ifdef SUPPORT_XDG_BASE_DIR
 	// $HOME/.config
 	char default_xdg_config_home[256];
 	char default_xdg_config_cache[256];
@@ -109,7 +122,7 @@ int nano_config_init(struct nanotodon_config *config)
 		goto buffer_err;
 	}
 	if (init_xdg(config, default_xdg_config_home, default_xdg_config_cache) == MAKE_CONFIG_DIR_OK) {
-		goto makepath;
+		return;
 	}
 #endif
 
@@ -124,7 +137,17 @@ int nano_config_init(struct nanotodon_config *config)
 	make_config_dir_or_die(config->root_dir);
 	make_config_dir_or_die(config->cache_dir);
 
-makepath:
+	return;
+
+buffer_err:
+
+	fprintf(stderr, "FATAL: Can't allocate memory. Too long filename.\n");
+	exit(EXIT_FAILURE);
+}
+
+int nano_config_init(struct nanotodon_config *config)
+{
+	nano_config_init_dirs(config);
 
 	if (snprintf(config->dot_token, sizeof(config->dot_token), "%s/token%s", config->root_dir, config->profile_name) >= sizeof(config->dot_token)) {
 		goto buffer_err;
