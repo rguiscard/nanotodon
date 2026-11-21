@@ -54,6 +54,9 @@ static void do_oauth(char *, char *, char *);
 // Tootを行う
 static void do_toot(char *);
 
+// アクセストークンとドメインを用意する
+static void setup_access_token(void);
+
 // ストリーミングでのToot受信処理,stream_event_handlerへ代入
 static void stream_event_update(struct sjson_node *);
 
@@ -853,11 +856,12 @@ void nanotodon_apply_cli_options(const struct nanotodon_cli_options *o)
 	}
 }
 
-// メイン関数
-int c_main()
+// アクセストークンとドメインを用意する。
+//  - config.dot_token があればそれを読む
+//  - なければドメイン入力 → クライアント登録 → OAuth の順で取得する
+// 結果は access_token (Authorization ヘッダ用) と domain_string に入る。
+static void setup_access_token(void)
 {
-	nano_config_init(&config);
-
 	char *env_lang = getenv("LANG");
 	int msg_lang = 0;
 
@@ -873,7 +877,7 @@ int c_main()
 		struct sjson_node *token;
 		struct sjson_node *jobj_from_file = read_json_from_file(config.dot_token, &json, &ctx);
 		read_json_fom_path(jobj_from_file, "access_token", &token);
-		sprintf(access_token, "Authorization: Bearer %s", token->string_);
+		snprintf(access_token, sizeof(access_token), "Authorization: Bearer %s", token->string_);
 		FILE *f2 = fopen(config.dot_domain, "rb");
 		fscanf(f2, "%255s", domain_string);
 		fclose(f2);
@@ -970,12 +974,20 @@ retry1:
 		}
 
 		// httpヘッダに添付する用の形式でコピーしておく
-		sprintf(access_token, "Authorization: Bearer %s", token->string_);
+		snprintf(access_token, sizeof(access_token), "Authorization: Bearer %s", token->string_);
 		printf("%s", nano_msg_list[msg_lang][NANO_MSG_FINISH]);
 
 		sjson_destroy_context(ctx);
 		free(json);
 	}
+}
+
+// メイン関数
+int c_main()
+{
+	nano_config_init(&config);
+
+	setup_access_token();
 
 	setlocale(LC_ALL, "");
 
