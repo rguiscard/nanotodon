@@ -960,11 +960,21 @@ int nanotodon_post_toot(const char *status, int status_len, int visibility, char
 	curl_easy_setopt(hnd, CURLOPT_TCP_KEEPALIVE, 1L);
 	curl_easy_setopt(hnd, CURLOPT_WRITEDATA, f);
 	curl_easy_setopt(hnd, CURLOPT_ERRORBUFFER, curl_err);
+	// curl は 4xx/5xx を既定では成功として扱うので、明示的に失敗させる
+	curl_easy_setopt(hnd, CURLOPT_FAILONERROR, 1L);
 
 	ret = curl_easy_perform(hnd);
-	if(ret != CURLE_OK) {
+
+	long http_code = 0;
+	curl_easy_getinfo(hnd, CURLINFO_RESPONSE_CODE, &http_code);
+	if(ret != CURLE_OK || http_code < 200 || http_code >= 300) {
 		size_t len = strlen(curl_err);
-		snprintf(errbuf, (size_t)errlen, "%s", len > 0 ? curl_err : curl_easy_strerror(ret));
+		const char *msg = len > 0 ? curl_err : curl_easy_strerror(ret);
+		if(http_code >= 100) {
+			snprintf(errbuf, (size_t)errlen, "HTTP %ld: %s", http_code, msg);
+		} else {
+			snprintf(errbuf, (size_t)errlen, "%s", msg);
+		}
 		rc = -1;
 	}
 
