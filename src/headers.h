@@ -29,16 +29,11 @@ void nanotodon_pump_output(void);
 #define NANOTODON_TIMELINE_LOCAL  1
 #define NANOTODON_TIMELINE_PUBLIC 2
 
-#define NANOTODON_VISIBILITY_PUBLIC   0
-#define NANOTODON_VISIBILITY_UNLISTED 1
-#define NANOTODON_VISIBILITY_PRIVATE  2
-#define NANOTODON_VISIBILITY_DIRECT   3
-
-// Posts a status with the given NANOTODON_VISIBILITY_* value.
-// Returns 0 on success, -1 on failure with a message in errbuf.
-// Never exits the process (unlike curl_fatal).
-// Lengths are `int` because the JSON protocol caps a request line at 64 KiB.
-int nanotodon_post_toot(const char *status, int status_len, int visibility, char *errbuf, int errlen);
+// Read-only accessors for the Zig poster (src/poster.zig). Both point at C
+// statics that stop changing once nanotodon_authenticate() has returned, so they
+// are safe to read from the connection-handler threads.
+const char *nanotodon_domain(void);
+const char *nanotodon_auth_header(void);
 
 // Command line options. Parsed in Zig (src/cli.zig), then handed over with a
 // single call to nanotodon_apply_cli_options() before nanotodon_prepare_paths() runs.

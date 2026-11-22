@@ -36,6 +36,10 @@
             .url = "git+https://codeberg.org/ziglang/translate-c?ref=2.0.2#c11030012dc325d446474d17b78c242fd1d622ec",
             .hash = "translate_c-2.0.2-Q_BUWvBNBwBgPKQJPblip6M7AHNK_IPNPmyv4rSIQMQc",
         },
+        .curl = .{
+            .url = "git+https://github.com/jiacai2050/zig-curl.git#24ff3a913367bbb03617838db34652f74475c0fc",
+            .hash = "curl-0.6.0-P4tT4Sc1AwA6qpw9BZEkfFGrdrhHDke2wu4YqOJNyPYL",
+        },
     },
     .paths = .{
         "build.zig",

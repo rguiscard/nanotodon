@@ -24,8 +24,8 @@ pub const cmd_toot = "toot";
 /// the Mastodon API (instances choose their own limit).
 pub const max_line: usize = 64 * 1024;
 
-/// Must match `NANOTODON_VISIBILITY_*` in src/headers.h, which is what
-/// `nanotodon_post_toot()` expects as an int.
+/// Sent over the wire as its tag name (`@tagName`), which is exactly the
+/// `visibility` value the Mastodon API expects.
 pub const Visibility = enum {
     public,
     unlisted,

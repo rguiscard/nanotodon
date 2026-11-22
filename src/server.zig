@@ -1,8 +1,8 @@
 //! UNIX socket front end of the nanotodon server.
 //!
 //! One JSONL request per connection. Requests are handed to a `Poster`
-//! callback (the C `nanotodon_post_toot()` in production, a stub in tests), so
-//! this file knows nothing about curl, Mastodon or C.
+//! callback (src/poster.zig in production, a stub in tests), so this file knows
+//! nothing about curl, Mastodon or C.
 //!
 //! Concurrency: `Server.accept()` blocks and `Io.net` does not expose a
 //! pollable handle, so accepting runs as one `Io.async` task and each

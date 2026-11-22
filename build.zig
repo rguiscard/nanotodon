@@ -30,6 +30,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const dep_curl = b.dependency("curl", .{ .link_vendor = false });
+
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
     // Zig modules are the preferred way of making Zig code available to consumers.
@@ -104,6 +106,7 @@ pub fn build(b: *std.Build) void {
                 // importing modules from different packages).
                 .{ .name = "nanotodon", .module = mod },
                 .{ .name = "translated", .module = t.mod },
+                .{ .name = "curl", .module = dep_curl.module("curl") },
             },
             .link_libc = true,
         }),

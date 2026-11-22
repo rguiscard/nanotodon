@@ -76,15 +76,15 @@ fn formatPath(buf: []u8, env: Env, profile: ?[]const u8) PathError![]const u8 {
     const dash: []const u8 = if (p.len == 0) "" else "-";
 
     if (usable(env.runtime_dir)) |dir| {
-        return std.fmt.bufPrint(buf, "{s}/nanotodon{s}{s}.sock", .{ dir, dash, p }) catch
+        return std.mem.print(buf, "{s}/nanotodon{s}{s}.sock", .{ dir, dash, p }) catch
             PathError.NoSpaceLeft;
     }
     if (usable(env.xdg_config_home)) |dir| {
-        return std.fmt.bufPrint(buf, "{s}/nanotodon/nanotodon{s}{s}.sock", .{ dir, dash, p }) catch
+        return std.mem.print(buf, "{s}/nanotodon/nanotodon{s}{s}.sock", .{ dir, dash, p }) catch
             PathError.NoSpaceLeft;
     }
     if (usable(env.home)) |dir| {
-        return std.fmt.bufPrint(buf, "{s}/.config/nanotodon/nanotodon{s}{s}.sock", .{ dir, dash, p }) catch
+        return std.mem.print(buf, "{s}/.config/nanotodon/nanotodon{s}{s}.sock", .{ dir, dash, p }) catch
             PathError.NoSpaceLeft;
     }
     return PathError.NoHome;

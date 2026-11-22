@@ -919,81 +919,18 @@ void nanotodon_runtime(void)
 #endif
 }
 
-// ---- src/server.zig から呼ばれるフック ----
+// ---- src/poster.zig から呼ばれるフック ----
 
-// Tootを投稿する。可視性は引数で受けとる。
-// curl_fatal() と違って失敗してもプロセスを終了しない。
-int nanotodon_post_toot(const char *status, int status_len, int visibility, char *errbuf, int errlen)
+// 読み取り専用アクセサ。どちらも nanotodon_authenticate() 以降は変化しないので、
+// スレッドからそのまま読める。
+const char *nanotodon_domain(void)
 {
-	static const char *vis_name[] = { "public", "unlisted", "private", "direct" };
-	CURLcode ret;
-	CURL *hnd;
-	curl_mime *mime;
-	curl_mimepart *part;
-	struct curl_slist *slist1;
-	char curl_err[CURL_ERROR_SIZE], *uri;
-	FILE *f;
-	int rc = 0;
+	return domain_string;
+}
 
-	if(errlen > 0) errbuf[0] = 0;
-
-	if(visibility < 0 || visibility > 3) {
-		snprintf(errbuf, (size_t)errlen, "invalid visibility %d", visibility);
-		return -1;
-	}
-
-	memset(curl_err, 0, sizeof curl_err);
-	uri = create_uri_string("api/v1/statuses");
-	f = fopen("/dev/null", "wb");
-
-	slist1 = NULL;
-	slist1 = curl_slist_append(slist1, access_token);
-
-	hnd = curl_easy_init();
-	mime = curl_mime_init(hnd);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "status");
-	curl_mime_data(part, status, (size_t)status_len);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "visibility");
-	curl_mime_data(part, vis_name[visibility], CURL_ZERO_TERMINATED);
-	curl_easy_setopt(hnd, CURLOPT_URL, uri);
-	curl_easy_setopt(hnd, CURLOPT_NOPROGRESS, 1L);
-	curl_easy_setopt(hnd, CURLOPT_MIMEPOST, mime);
-	curl_easy_setopt(hnd, CURLOPT_USERAGENT, CURL_USERAGENT);
-	curl_easy_setopt(hnd, CURLOPT_HTTPHEADER, slist1);
-	curl_easy_setopt(hnd, CURLOPT_MAXREDIRS, 50L);
-	curl_easy_setopt(hnd, CURLOPT_TCP_KEEPALIVE, 1L);
-	curl_easy_setopt(hnd, CURLOPT_WRITEDATA, f);
-	curl_easy_setopt(hnd, CURLOPT_ERRORBUFFER, curl_err);
-	// curl は 4xx/5xx を既定では成功として扱うので、明示的に失敗させる
-	curl_easy_setopt(hnd, CURLOPT_FAILONERROR, 1L);
-
-	ret = curl_easy_perform(hnd);
-
-	long http_code = 0;
-	curl_easy_getinfo(hnd, CURLINFO_RESPONSE_CODE, &http_code);
-	if(ret != CURLE_OK || http_code < 200 || http_code >= 300) {
-		size_t len = strlen(curl_err);
-		const char *msg = len > 0 ? curl_err : curl_easy_strerror(ret);
-		if(http_code >= 100) {
-			snprintf(errbuf, (size_t)errlen, "HTTP %ld: %s", http_code, msg);
-		} else {
-			snprintf(errbuf, (size_t)errlen, "%s", msg);
-		}
-		rc = -1;
-	}
-
-	if(f) fclose(f);
-	curl_mime_free(mime);
-	mime = NULL;
-	curl_easy_cleanup(hnd);
-	hnd = NULL;
-	free(uri);
-	curl_slist_free_all(slist1);
-	slist1 = NULL;
-
-	return rc;
+const char *nanotodon_auth_header(void)
+{
+	return access_token;
 }
 
 // ---- src/loop.zig から呼ばれるフック ----

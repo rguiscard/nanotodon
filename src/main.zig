@@ -5,6 +5,7 @@ const translated = @import("translated");
 const cli = @import("cli.zig");
 const loop = @import("loop.zig");
 const proto = @import("proto.zig");
+const poster = @import("poster.zig");
 const server = @import("server.zig");
 const socketpath = @import("socketpath.zig");
 
@@ -85,7 +86,7 @@ pub fn main(init: std.process.Init) !void {
         io,
         arena,
         socket_path,
-        .{ .postFn = postStatus },
+        .{ .postFn = poster.post },
         server.default_max_concurrent,
     ) catch |err| {
         std.debug.print("nanotodon: cannot listen on {s}: {s}\n", .{ socket_path, @errorName(err) });
@@ -128,33 +129,16 @@ fn streamEntry() void {
     translated.nanotodon_stream_loop();
 }
 
-/// Hands a status to C, which posts it with the Mastodon API. Returns null on
-/// success or the error message C wrote into `err_out`.
-fn postStatus(
-    _: ?*anyopaque,
-    status: [:0]const u8,
-    visibility: proto.Visibility,
-    err_out: []u8,
-) ?[]const u8 {
-    const rc = translated.nanotodon_post_toot(
-        status.ptr,
-        @intCast(status.len),
-        @intFromEnum(visibility),
-        err_out.ptr,
-        @intCast(err_out.len),
-    );
-    if (rc == 0) return null;
-    return std.mem.sliceTo(err_out, 0);
-}
-
-// `cli`, `loop`, `server` and `socketpath` are only referenced from main(),
-// which is not analyzed in a test build, so without touching them here the
-// tests inside those files would never be collected. refAllDecls also forces
-// analysis of `cli.apply()`, which otherwise only runs in the real executable.
+// `cli`, `loop`, `proto`, `server` and `socketpath` are only referenced from
+// main(), which is not analyzed in a test build, so without touching them here
+// the tests inside those files would never be collected. refAllDecls also
+// forces analysis of `cli.apply()`, which otherwise only runs in the real
+// executable.
 test {
 //    _ = cli;
     std.testing.refAllDecls(cli);
     std.testing.refAllDecls(loop);
+    std.testing.refAllDecls(poster);
     std.testing.refAllDecls(proto);
     std.testing.refAllDecls(server);
     std.testing.refAllDecls(socketpath);
