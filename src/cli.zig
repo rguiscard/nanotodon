@@ -1,13 +1,9 @@
 //! Command line option handling for nanotodon.
 //!
 //! Parsing, validation, clamping and the user facing messages all live here.
-//! The result is handed to the C side with a single call to
-//! `nanotodon_apply_cli_options()` (see src/headers.h), so C keeps ownership
-//! of its static string literals and of `config.profile_name[256]`.
-//!
-//! `apply()` must run before the C startup phases: `config.profile_name` feeds
-//! both `dot_token`/`dot_domain` (computed in `nanotodon_prepare_paths()`) and
-//! the socket name.
+//! Only the flags are handed to the C side (`nanotodon_apply_cli_options()`);
+//! the profile stays in Zig, where it decides the config paths (src/config.zig)
+//! and the socket name (src/socketpath.zig).
 
 const std = @import("std");
 const translated = @import("translated");
@@ -19,7 +15,8 @@ pub const Timeline = enum(c_int) {
     public = 2,
 };
 
-/// `config.profile_name` is `char[256]`; the longest storable name is 255.
+/// Longest profile name we accept; it becomes part of the config file names
+/// (`token<profile>`) and the socket file name.
 pub const max_profile_len = 255;
 
 /// Hard upper bound the C code used to apply to `-tllimit` (the REST API caps
@@ -114,35 +111,19 @@ pub fn parse(it: anytype, writer: ?*std.Io.Writer) Error!Options {
     return opts;
 }
 
-/// Copy the parsed options into the C side.
-///
-/// Must be called exactly once, before the C startup phases. The
-/// profile pointer handed to C refers to `profile_buf`, which is static so its
-/// lifetime covers the whole process.
+/// Copy the parsed flags into the C side. The profile is not passed: Zig owns it
+/// (it decides the config paths and the socket name).
 pub fn apply(opts: Options) void {
     var c_opts: C_Options = .{
         .mono = if (opts.mono) 1 else 0,
         .unlock = if (opts.unlock) 1 else 0,
         .no_emoji = if (opts.no_emoji) 1 else 0,
-        .profile = null,
         .limit_timeline = opts.limit_timeline,
         .timeline = @intFromEnum(opts.timeline),
     };
 
-    if (opts.profile) |name| {
-        std.debug.assert(name.len <= max_profile_len);
-        const len = @min(name.len, max_profile_len);
-        @memcpy(profile_buf[0..len], name[0..len]);
-        profile_buf[len] = 0;
-        c_opts.profile = @as([*:0]const u8, @ptrCast(profile_buf[0..].ptr));
-    }
-
     translated.nanotodon_apply_cli_options(&c_opts);
 }
-
-/// Backing storage for the NUL terminated profile name passed to C.
-/// Only written by `apply()` before any C thread exists.
-var profile_buf: [max_profile_len + 1]u8 = undefined;
 
 /// translate-c exports a same-named typedef as a plain alias; fall back to the
 /// raw tag name in case only that one is emitted.

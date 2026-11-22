@@ -3,19 +3,26 @@
 // self-contained: plain C declarations, no #include of project headers.
 
 // Startup phases, called from src/main.zig in this order:
-//   prepare_paths -> authenticate -> runtime
-// The order matters, so they are separate calls rather than one entry point.
+//   curl_init -> set_paths -> (set_credentials | register) -> runtime
+// Paths are computed in Zig (src/config.zig).
 
-// Resolves config.root_dir/cache_dir, creates the directories and computes the
-// token/domain paths. Touches neither the network nor stdin, so it can run
-// before the socket is bound.
-void nanotodon_prepare_paths(void);
+// Initialises libcurl. Must happen once, before any thread uses curl.
+void nanotodon_curl_init(void);
 
-// Loads the access token, or runs the interactive OAuth registration (may block
-// on stdin). Also initialises libcurl.
-void nanotodon_authenticate(void);
+// Hands the Zig-computed paths to C, which no longer derives them itself.
+void nanotodon_set_paths(const char *root_dir, const char *cache_dir,
+                         const char *token_path, const char *domain_path);
 
-// Locale, output queue and (if enabled) Sixel. Must run before the threads start.
+// Sets the curl header value ("Authorization: Bearer ...") and the instance
+// hostname.
+void nanotodon_set_credentials(const char *auth_header, const char *domain);
+
+// Interactive first-run registration: prompts for the instance, registers the
+// app and runs OAuth, writing the token file. Reads stdin, so it may block.
+void nanotodon_register(void);
+
+// Locale, output queue and (if built with -Dimage) the image cache path.
+// Must run before the threads start.
 void nanotodon_runtime(void);
 
 // Runs the blocking streaming loop (curl SSE). Blocking, so src/main.zig starts
@@ -40,18 +47,17 @@ void nanotodon_sbuf_put(void *sbctx, const void *data, int len);
 void nanotodon_kitty_emit(void *sbctx, const void *rgba, int w, int h);
 
 // Read-only accessors for the Zig poster (src/poster.zig). Both point at C
-// statics that stop changing once nanotodon_authenticate() has returned, so they
+// statics that stop changing once nanotodon_set_credentials() has returned, so they
 // are safe to read from the connection-handler threads.
 const char *nanotodon_domain(void);
 const char *nanotodon_auth_header(void);
 
-// Command line options. Parsed in Zig (src/cli.zig), then handed over with a
-// single call to nanotodon_apply_cli_options() before nanotodon_prepare_paths() runs.
+// CLI options are parsed in Zig (src/cli.zig) and handed over with a single
+// call to nanotodon_apply_cli_options().
 typedef struct nanotodon_cli_options {
 	int mono;             // -mono
 	int unlock;           // -unlock
 	int no_emoji;         // -noemoji
-	const char *profile;  // -profile <name>, NULL when not given
 	int limit_timeline;   // -tllimit <num>, < 0 keeps the C default
 	int timeline;         // NANOTODON_TIMELINE_*
 } nanotodon_cli_options;

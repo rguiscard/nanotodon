@@ -2,6 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const translated = @import("translated");
+const config = @import("config.zig");
 const cli = @import("cli.zig");
 const kitty = @import("kitty.zig");
 const loop = @import("loop.zig");
@@ -48,26 +49,50 @@ pub fn main(init: std.process.Init) !void {
     // to the C output.
     try stdout_writer.flush();
 
-    // Must happen before nanotodon_prepare_paths(): config.profile_name feeds
-    // dot_token/dot_domain *and* the socket name, and nano_config_init() runs
-    // first thing in that phase. It also copies the profile name out of the
-    // iterator's storage, so it has to run while `arg_it` is still alive
-    // (deinit is deferred to the end).
+    // Only the flags go to C now; the profile is Zig's business (it feeds the
+    // config paths and the socket name).
     cli.apply(opts);
 
-    // Startup phase 1: config paths and directories (no network, no stdin),
-    // because the socket may live in one of those directories and has to exist
-    // before we bind. This is what made the first run on macOS fail before.
-    translated.nanotodon_prepare_paths();
+    // Startup phase 1: configuration. Paths are a pure function of the
+    // environment and the profile, and the directories are created here — before
+    // the socket is bound, because the socket may live in the config root.
+    const env = config.Env.fromMap(init.environ_map);
+    const cfg = config.Config.init(arena, io, env, opts.profile) catch |err| {
+        switch (err) {
+            error.NoHome => std.debug.print(
+                "nanotodon: no $HOME or $XDG_CONFIG_HOME for the config directory\n",
+                .{},
+            ),
+            error.PathTooLong => std.debug.print(
+                "nanotodon: config path too long (max {d} bytes)\n",
+                .{config.max_path},
+            ),
+            else => std.debug.print(
+                "nanotodon: cannot create the config directories: {s}\n",
+                .{@errorName(err)},
+            ),
+        }
+        std.process.exit(1);
+    };
+
+    // Hand the paths to C: it no longer computes them, it only uses them (token
+    // file for registration, cache dir for the image cache).
+    translated.nanotodon_set_paths(
+        cfg.root_dir.ptr,
+        cfg.cache_dir.ptr,
+        cfg.token_path.ptr,
+        cfg.domain_path.ptr,
+    );
 
     // Bind before touching the network: a failed bind must exit before reading
     // a token or running the OAuth dance. Requests queue in the kernel backlog
     // until the accept loop starts further down.
     const socket_path = socketpath.resolve(
         arena,
-        socketpath.Env.fromMap(init.environ_map),
+        env,
         opts.socket,
         opts.profile,
+        cfg.root_dir,
     ) catch |err| switch (err) {
         error.NameTooLong => {
             std.debug.print("nanotodon: socket path too long; pass -socket <path>\n", .{});
@@ -95,10 +120,21 @@ pub fn main(init: std.process.Init) !void {
     };
     std.debug.print("listening on {s}\n", .{socket_path});
 
-    // Startup phases 2 and 3, only after the socket is bound: loading the token
-    // can block on the OAuth prompt, and the queue has to exist before any
-    // thread can enqueue into it.
-    translated.nanotodon_authenticate();
+    // libcurl's lazy init is not thread-safe, so it happens once, before the
+    // registration below and before any thread exists.
+    translated.nanotodon_curl_init();
+
+    // Startup phase 2: credentials. Reading the token is now Zig's job; only
+    // registration (which prompts on stdin and does two POSTs) is still C.
+    if (!loadCredentials(arena, io, cfg)) {
+        translated.nanotodon_register();
+        if (!loadCredentials(arena, io, cfg)) {
+            std.debug.print("nanotodon: registration did not produce an access token\n", .{});
+            std.process.exit(1);
+        }
+    }
+
+    // Startup phase 3: locale, output queue and the image cache directory.
     translated.nanotodon_runtime();
 
     // The stream loop blocks in curl forever, so it must not be an `Io` task:
@@ -130,6 +166,28 @@ fn streamEntry() void {
     translated.nanotodon_stream_loop();
 }
 
+/// Reads the token and domain from the config and hands them to C, which keeps
+/// them as statics for the curl calls. Returns false when there is no token yet,
+/// i.e. the first run needs registration.
+fn loadCredentials(arena: std.mem.Allocator, io: std.Io, cfg: config.Config) bool {
+    const token = (cfg.readToken(arena, io) catch return false) orelse return false;
+    const domain = (cfg.readDomain(arena, io) catch return false) orelse return false;
+
+    var hdr_buf: [256 + 32]u8 = undefined;
+    const header = std.mem.printSentinel(
+        &hdr_buf,
+        "Authorization: Bearer {s}",
+        .{token},
+        0,
+    ) catch {
+        std.debug.print("nanotodon: access token is too long\n", .{});
+        return false;
+    };
+
+    translated.nanotodon_set_credentials(header.ptr, domain.ptr);
+    return true;
+}
+
 /// C entry point for src/image.c (declared in src/headers.h). It lives in the
 /// root source file on purpose: Zig only emits `export` declarations from files
 /// that get analysed, and nothing inside Zig calls this — only C does. From
@@ -151,6 +209,7 @@ export fn nanotodon_kitty_emit(
 test {
 //    _ = cli;
     std.testing.refAllDecls(cli);
+    std.testing.refAllDecls(config);
     std.testing.refAllDecls(kitty);
     std.testing.refAllDecls(loop);
     std.testing.refAllDecls(poster);

@@ -7,7 +7,7 @@
 //!
 //! Everything here is read-only after startup: `nanotodon_domain()` and
 //! `nanotodon_auth_header()` return pointers to C statics that are filled in by
-//! `nanotodon_authenticate()` before any thread starts.
+//! `nanotodon_set_credentials()` before any thread starts.
 //!
 //! Note: this links against whatever libcurl `build.zig` selects. With
 //! `link_vendor = false` (the current setting) the system libcurl provides the

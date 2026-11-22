@@ -76,11 +76,9 @@ pub fn build(b: *std.Build) void {
     };
     const c_flags_base = [_][]const u8{
         "-D_GNU_SOURCE",
-        "-DSUPPORT_XDG_BASE_DIR",
     };
     const c_flags_image = [_][]const u8{
         "-D_GNU_SOURCE",
-        "-DSUPPORT_XDG_BASE_DIR",
         "-DUSE_KITTY",
     };
 

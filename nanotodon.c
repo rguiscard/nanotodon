@@ -48,9 +48,6 @@ static void get_timeline(void);
 // 承認コードを使ったOAuth処理
 static void do_oauth(char *, char *, char *);
 
-// アクセストークンとドメインを用意する
-static void setup_access_token(void);
-
 // ストリーミングでのToot受信処理,stream_event_handlerへ代入
 static void stream_event_update(struct sjson_node *);
 
@@ -723,17 +720,13 @@ static void get_timeline(void)
 	slist1 = NULL;
 }
 
-// CLIオプションを反映する(src/cli.zig から nanotodon_prepare_paths() の前に一度だけ呼ばれる)
+// CLIオプションを反映する(src/cli.zig から起動時に一度だけ呼ばれる。
+// プロファイルは Zig 側が持つので、ここには渡ってこない)
 void nanotodon_apply_cli_options(const struct nanotodon_cli_options *o)
 {
 	monoflag = o->mono ? 1 : 0;
 	hidlckflag = o->unlock ? 0 : 1;
 	noemojiflag = o->no_emoji ? 1 : 0;
-
-	config.profile_name[0] = 0;
-	if(o->profile) {
-		snprintf(config.profile_name, sizeof(config.profile_name), "%s", o->profile);
-	}
 
 	if(o->limit_timeline >= 0) {
 		limit_timeline = o->limit_timeline;
@@ -753,35 +746,17 @@ void nanotodon_apply_cli_options(const struct nanotodon_cli_options *o)
 	}
 }
 
-// アクセストークンとドメインを用意する。
-//  - config.dot_token があればそれを読む
-//  - なければドメイン入力 → クライアント登録 → OAuth の順で取得する
-// 結果は access_token (Authorization ヘッダ用) と domain_string に入る。
-static void setup_access_token(void)
+// 初回登録: ドメイン入力 → クライアント登録 → OAuth の順でトークンを取得し、
+// トークンファイルに書き出す(読み直しは Zig 側 src/config.zig が行う)。
+// 標準入力を読むので、ここだけはブロックしうる。
+void nanotodon_register(void)
 {
 	char *env_lang = getenv("LANG");
 	int msg_lang = 0;
 
 	if(env_lang && !strcmp(env_lang,"ja_JP.UTF-8")) msg_lang = 1;
 
-	// トークンファイルオープン
-	FILE *fp = fopen(config.dot_token, "rb");
-	if(fp) {
-		// 存在すれば読み込む
-		fclose(fp);
-		struct sjson_context *ctx;
-		char *json;
-		struct sjson_node *token;
-		struct sjson_node *jobj_from_file = read_json_from_file(config.dot_token, &json, &ctx);
-		read_json_fom_path(jobj_from_file, "access_token", &token);
-		snprintf(access_token, sizeof(access_token), "Authorization: Bearer %s", token->string_);
-		FILE *f2 = fopen(config.dot_domain, "rb");
-		fscanf(f2, "%255s", domain_string);
-		fclose(f2);
-		sjson_destroy_context(ctx);
-		free(json);
-	} else {
-		// ない場合は登録処理へ
+	{
 		char domain[256];
 		char *ck;
 		char *cs;
@@ -870,8 +845,8 @@ retry1:
 			goto retry1;
 		}
 
-		// httpヘッダに添付する用の形式でコピーしておく
-		snprintf(access_token, sizeof(access_token), "Authorization: Bearer %s", token->string_);
+		// 認証トークンはファイルに書かれている。読み直しと
+		// ヘッダ文字列の組み立ては Zig 側が行う。
 		printf("%s", nano_msg_list[msg_lang][NANO_MSG_FINISH]);
 
 		sjson_destroy_context(ctx);
@@ -882,22 +857,27 @@ retry1:
 // ---- src/main.zig から呼ばれる起動フェーズ ----
 // 順番が意味を持つので、まとめずに名前で分けてある。
 
-// config.root_dir/cache_dir を決めてディレクトリを作り、
-// dot_token/dot_domain を計算する。ネットワークも標準入力も使わないので、
-// ソケットを bind する前に呼べる。
-void nanotodon_prepare_paths(void)
+// libcurl の遅延初期化はスレッドセーフではないので、スレッド生成前に済ませる
+void nanotodon_curl_init(void)
 {
-	nano_config_init(&config);
+	curl_global_init(CURL_GLOBAL_DEFAULT);
 }
 
-// アクセストークンを用意する。無ければ OAuth 登録に入るので、
-// ここだけは標準入力を読んでブロックしうる。
-void nanotodon_authenticate(void)
+// Zig(src/config.zig)が決めたパスを受け取る。C 側ではもうパスを計算しない。
+void nanotodon_set_paths(const char *root_dir, const char *cache_dir,
+                         const char *token_path, const char *domain_path)
 {
-	// libcurl の遅延初期化はスレッドセーフではないので、スレッド生成前に済ませる
-	curl_global_init(CURL_GLOBAL_DEFAULT);
+	snprintf(config.root_dir, sizeof(config.root_dir), "%s", root_dir);
+	snprintf(config.cache_dir, sizeof(config.cache_dir), "%s", cache_dir);
+	snprintf(config.dot_token, sizeof(config.dot_token), "%s", token_path);
+	snprintf(config.dot_domain, sizeof(config.dot_domain), "%s", domain_path);
+}
 
-	setup_access_token();
+// ヘッダ用の文字列とドメインを設定する。
+void nanotodon_set_credentials(const char *auth_header, const char *domain)
+{
+	snprintf(access_token, sizeof(access_token), "%s", auth_header);
+	snprintf(domain_string, sizeof(domain_string), "%s", domain);
 }
 
 // 端末とキューの初期化。スレッドを起動する前に済ませる。
@@ -913,7 +893,7 @@ void nanotodon_runtime(void)
 
 // ---- src/poster.zig から呼ばれるフック ----
 
-// 読み取り専用アクセサ。どちらも nanotodon_authenticate() 以降は変化しないので、
+// 読み取り専用アクセサ。どちらも nanotodon_set_credentials() 以降は変化しない。
 // スレッドからそのまま読める。
 const char *nanotodon_domain(void)
 {

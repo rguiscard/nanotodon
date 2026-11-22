@@ -3,9 +3,9 @@
 
 #include <stdlib.h>
 
+// Paths are computed in Zig (src/config.zig) and pushed in through
+// nanotodon_set_paths(); C only ever uses them.
 struct nanotodon_config {
-	char profile_name[256];
-
 	char root_dir[256];
 	char dot_token[256];
 	char dot_domain[256];
@@ -13,12 +13,8 @@ struct nanotodon_config {
 	char cache_dir[256];
 };
 
-int nano_config_init(struct nanotodon_config *);
-
-// 設定ディレクトリ(root_dir, cache_dir)の決定と作成だけを行う。
-// トークン/ドメインファイルのパスは計算しない。
-void nano_config_init_dirs(struct nanotodon_config *);
-
+// Builds <root_dir>/app_token/<domain> and creates the app_token directory.
+// Used only by the first-run registration in nanotodon.c.
 int nano_config_app_token_filename(struct nanotodon_config *, const char *, char *, size_t);
 
 #endif

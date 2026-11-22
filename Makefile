@@ -7,7 +7,7 @@ CFLAGS += -D_GNU_SOURCE
 LDLIBS += -lcurl -lpthread -lm
 
 # Use $XDG_CONFIG_HOME or ~/.config dir to save config files
-CFLAGS += -DSUPPORT_XDG_BASE_DIR
+# (config paths are computed in Zig: src/config.zig)
 
 # EXPERIMENTAL: kitty graphics support for image attachments
 #CFLAGS += -DUSE_KITTY

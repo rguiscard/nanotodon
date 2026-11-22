@@ -107,6 +107,7 @@ pub fn main(init: std.process.Init) !void {
         socketpath.Env.fromMap(init.environ_map),
         socket_opt,
         profile,
+        null, // no Config here: derive the directory from the environment
     ) catch |err| switch (err) {
         error.NameTooLong => dieFatal("socket path too long; pass -socket\n", .{}),
         error.NoHome => dieFatal("no $HOME or $XDG_RUNTIME_DIR to look for the socket in\n", .{}),
