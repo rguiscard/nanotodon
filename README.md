@@ -1,22 +1,30 @@
-# nanotodon
-CLI Mastodon Client
+# nanotodon rewritten
 
-# 注意
-現在かなり大規模に開発中です。安定利用はできない可能性があります
+Mastodon Client in two parts, a long running 'nanotodon' to display current timeline, and a tool 'toot' for posting. The idea is to have the long running 'nanotodon' to handle all incoming information and outcomoing one comes from one-shot 'toot' tool.
 
-# 依存ライブラリ
-- cURL
-- pthread
+## Build
 
-# ビルド
-## pkgsrc環境
-```CFLAGS="-I/usr/pkg/include" LDFLAGS="-L/usr/pkg/lib -Wl,-R/usr/pkg/lib" make```
+- zig 0.17.1
 
-## OpenBSD
-```CFLAGS="-I/usr/local/include" LDFLAGS="-L/usr/local/lib" make```
+```
+$ zig build
+```
 
-## その他
-```make```
+## Usage
+
+```
+$ nanotodon
+```
+
+For the first time, it requests the access token from your masmtodon account. After that, it just display the latest toots
+
+```
+$ toot hello (or any other message
+```
+
+This is a one-shot command line tool to post the toot through nanotodon.
+
+### nanotodon
 
 # オプション
 - ```-mono```  
@@ -37,38 +45,16 @@ CLI Mastodon Client
 - ```-tllimit <num>```  
   - (WIP)起動時にrest APIで取得するトゥート数の指定(デフォルトは 20)
 
-# 投稿方法
-1. TLが流れているときにEnterを押す
-2. ``> ``とプロンプトが出るのでToot内容を入力(``\n``と``\\``が利用できます)
-3. Enterを押すと投稿
-- Toot入力中はTLの更新がブロックされます
-- 以前のVerにあった``/private``等も利用できます
+### toot
 
-# 詳しいガイド
-TBW  
-
-# 動いてるっぽい環境(24/12/07)
-- WSL2 + VSCode Terminal(w/ Sixel)
-- WSL2 + Windows Terminal
-- OpenBSD/amd64
-- NetBSD/i386 10.0 (w/ Sixel)
-- NetBSD/evbppc 10.0 (on Nintendo Wii)
-- NetBSD/amd64 10.0 (w/ Sixel)
-- NetBSD/evbarm 10.0 (w/ Sixel)
-- NetBSD/luna68k 10.0 (w/ Sixel)
-- NetBSD/vax 10.0 (w/ Sixel)
-- NetBSD/mac68k 10.0 (w/ Sixel)
-- NetBSD/hp300 10.0 (w/ Sixel)
-- NetBSD/sun3 10.0 (w/ Sixel)
-
-# ~~テスト済み環境(0.1.x-0.3.x)~~
-- ~~NetBSD/luna68k + mlterm~~
-- ~~NetBSD/x68k + mlterm~~
-- ~~NetBSD/sun3 + mlterm~~
-- ~~ArchLinux + xfce terminal~~
-- ~~WSL1 + mintty(wsl-terminal)~~
-- ~~WSL2 + mintty(wsltty)~~
-- ~~WSL1 + Windows Terminal~~
-
-# Thanks
+```
+$ toot hello (or any other message
+$ toot -v public (or unlisted, private and direct) hello
+$ toot -v private << EOF
+multiple
+line
+message
+EOF
+```
+## Thanks
 - septag : sjson.h (https://github.com/septag/sjson)
