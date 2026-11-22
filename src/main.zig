@@ -3,6 +3,7 @@ const Io = std.Io;
 
 const translated = @import("translated");
 const cli = @import("cli.zig");
+const kitty = @import("kitty.zig");
 const loop = @import("loop.zig");
 const proto = @import("proto.zig");
 const poster = @import("poster.zig");
@@ -129,6 +130,19 @@ fn streamEntry() void {
     translated.nanotodon_stream_loop();
 }
 
+/// C entry point for src/image.c (declared in src/headers.h). It lives in the
+/// root source file on purpose: Zig only emits `export` declarations from files
+/// that get analysed, and nothing inside Zig calls this — only C does. From
+/// src/kitty.zig the export was silently dropped and the link failed.
+export fn nanotodon_kitty_emit(
+    sbctx: ?*anyopaque,
+    rgba: ?*const anyopaque,
+    w: c_int,
+    h: c_int,
+) callconv(.c) void {
+    kitty.emit(sbctx, rgba, w, h);
+}
+
 // `cli`, `loop`, `proto`, `server` and `socketpath` are only referenced from
 // main(), which is not analyzed in a test build, so without touching them here
 // the tests inside those files would never be collected. refAllDecls also
@@ -137,6 +151,7 @@ fn streamEntry() void {
 test {
 //    _ = cli;
     std.testing.refAllDecls(cli);
+    std.testing.refAllDecls(kitty);
     std.testing.refAllDecls(loop);
     std.testing.refAllDecls(poster);
     std.testing.refAllDecls(proto);

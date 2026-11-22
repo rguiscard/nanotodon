@@ -1,5 +1,6 @@
 #include "nanotodon.h"
 #include "sbuf.h"
+#include "src/headers.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -36,6 +37,14 @@ void nputbuf(sbctx_t *sbctx, const void *d, int l)
 
 	memcpy(sbctx->cache + sbctx->cacheptr, d, l);
 	sbctx->cacheptr += l;
+}
+
+// Append to an sbctx from outside C. src/kitty.zig builds the Kitty escape
+// stream and hands it over through this, so the Zig side never needs to know
+// the layout of sbctx_t.
+void nanotodon_sbuf_put(void *sbctx, const void *data, int len)
+{
+	nputbuf((sbctx_t *)sbctx, data, len);
 }
 
 /*

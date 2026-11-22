@@ -29,6 +29,16 @@ void nanotodon_pump_output(void);
 #define NANOTODON_TIMELINE_LOCAL  1
 #define NANOTODON_TIMELINE_PUBLIC 2
 
+// ---- image attachments (-DUSE_KITTY) ----
+
+// Implemented in C (sbuf.c): lets Zig append to an sbctx without exposing the
+// struct layout.
+void nanotodon_sbuf_put(void *sbctx, const void *data, int len);
+
+// Implemented in Zig (src/kitty.zig): encodes decoded RGBA pixels as Kitty
+// graphics and appends the escape stream to `sbctx`. Called from image.c.
+void nanotodon_kitty_emit(void *sbctx, const void *rgba, int w, int h);
+
 // Read-only accessors for the Zig poster (src/poster.zig). Both point at C
 // statics that stop changing once nanotodon_authenticate() has returned, so they
 // are safe to read from the connection-handler threads.

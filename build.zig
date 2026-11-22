@@ -32,6 +32,12 @@ pub fn build(b: *std.Build) void {
 
     const dep_curl = b.dependency("curl", .{ .link_vendor = false });
 
+    // Kitty graphics support for image attachments (image.c). Off by default so
+    // a plain `zig build` behaves exactly as before; enable with
+    // `zig build -Dimage=true`. The switch is a C macro, because the decision is
+    // made where the renderer calls into image.c (src/nanotodon.c).
+    const image = b.option(bool, "image", "Render image attachments (Kitty graphics)") orelse false;
+
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
     // Zig modules are the preferred way of making Zig code available to consumers.
@@ -51,20 +57,39 @@ pub fn build(b: *std.Build) void {
         // which requires us to specify a target.
         .target = target,
     });
+    const c_sources_base = [_][]const u8{
+        "config.c",
+        "messages.c",
+        "nanotodon.c",
+        "sbuf.c",
+        "squeue.c",
+        "utils.c",
+    };
+    const c_sources_image = [_][]const u8{
+        "config.c",
+        "messages.c",
+        "nanotodon.c",
+        "sbuf.c",
+        "squeue.c",
+        "utils.c",
+        "image.c",
+    };
+    const c_flags_base = [_][]const u8{
+        "-D_GNU_SOURCE",
+        "-DSUPPORT_XDG_BASE_DIR",
+    };
+    const c_flags_image = [_][]const u8{
+        "-D_GNU_SOURCE",
+        "-DSUPPORT_XDG_BASE_DIR",
+        "-DUSE_KITTY",
+    };
+
+    const c_sources: []const []const u8 = if (image) &c_sources_image else &c_sources_base;
+    const c_flags: []const []const u8 = if (image) &c_flags_image else &c_flags_base;
+
     mod.addCSourceFiles(.{
-        .files = &.{
-            "config.c",
-            "messages.c",
-            "nanotodon.c",
-            "sbuf.c",
-            "sixel.c",
-            "squeue.c",
-            "utils.c",
-        },
-        .flags = &.{
-            "-D_GNU_SOURCE",
-            "-DSUPPORT_XDG_BASE_DIR",
-        },
+        .files = c_sources,
+        .flags = c_flags,
     });
 
     // Here we define an executable. An executable needs to have a root module

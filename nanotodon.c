@@ -16,7 +16,9 @@
 #include "sbuf.h"
 #include "squeue.h"
 #include "utils.h"
-#include "sixel.h"
+#ifdef USE_KITTY
+#include "image.h"
+#endif
 #include "src/headers.h"
 
 static char *streaming_json = NULL;
@@ -172,9 +174,11 @@ static void stream_event_update(struct sjson_node *jobj_from_string)
 	char datebuf[DATEBUFLEN];
 	if(!jobj_from_string) return;
 
-#ifdef USE_SIXEL
-	struct sjson_node *avatar, *sensitive;
-	read_json_fom_path(jobj_from_string, "account/avatar", &avatar);
+#ifdef USE_KITTY
+	// TODO(avatar): the status also carries "account/avatar" (an image URL). It is
+	// not read because avatars are not rendered yet; when they come back, parse it
+	// here and print it above the status body (block layout) via print_image().
+	struct sjson_node *sensitive = NULL;
 	read_json_fom_path(jobj_from_string, "sensitive", &sensitive);
 #endif
 
@@ -198,9 +202,9 @@ static void stream_event_update(struct sjson_node *jobj_from_string)
 		}
 	}
 
-#ifdef USE_SIXEL
-	int fnsfw = 0;
-	fnsfw = sensitive->bool_ ? 0x100 : 0;
+#ifdef USE_KITTY
+	// 添付画像を出すか、伏せるかの判定にだけ使う
+	const int sensitive_media = sensitive != NULL && sensitive->bool_;
 #endif
 
 	sjson_tag type;
@@ -235,22 +239,6 @@ static void stream_event_update(struct sjson_node *jobj_from_string)
 		stream_event_update(reblog);
 		return;
 	}
-
-#ifdef USE_SIXEL
-	sbctx_t sb_avt;
-	sbctx_t *sbctx_avt = &sb_avt;
-
-	ninitbuf(&sb_avt);
-
-	print_picture(sbctx_avt, avatar->string_, SIXEL_MUL_ICO);
-
-	// アイコン右側にカーソル移動
-	move_cursor_to_avatar(sbctx_avt);
-
-	nflushcache(&sb_avt);
-	squeue_enqueue(sb_avt);
-	//naddstr(sbctx, "\n");
-#endif
 
 	sbctx_t sb;
 	sbctx_t *sbctx = &sb;
@@ -382,12 +370,16 @@ static void stream_event_update(struct sjson_node *jobj_from_string)
 				naddstr(sbctx_att,  noemojiflag ? "<LINK>" : "🔗");
 				naddstr(sbctx_att,  url->string_);
 				naddstr(sbctx_att,  "\n");
-#ifdef USE_SIXEL
+#ifdef USE_KITTY
 				struct sjson_node *type;
 				read_json_fom_path(obj, "type", &type);
-				if(!strcmp(type->string_, "image")) {
-					print_picture(sbctx_att, url->string_, SIXEL_MUL_PIC | fnsfw);
-					naddstr(sbctx_att,  "\n");
+				if(type != NULL && !strcmp(type->string_, "image")) {
+					if(sensitive_media) {
+						naddstr(sbctx_att, "[sensitive image]\n");
+					} else {
+						print_image(sbctx_att, url->string_);
+						naddstr(sbctx_att,  "\n");
+					}
 				}
 #endif
 			}
@@ -914,8 +906,8 @@ void nanotodon_runtime(void)
 	setlocale(LC_ALL, "");
 
 	squeue_init();
-#ifdef USE_SIXEL
-	sixel_init();
+#ifdef USE_KITTY
+	image_init();
 #endif
 }
 
