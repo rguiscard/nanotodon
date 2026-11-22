@@ -46,17 +46,17 @@ pub fn main(init: std.process.Init) !void {
     // to the C output.
     try stdout_writer.flush();
 
-    // Must happen before nanotodon_init(): it fills the globals C reads from
-    // the streaming thread and sets config.profile_name before
-    // nano_config_init() runs. It also copies the profile name out of the
+    // Must happen before nanotodon_prepare_paths(): config.profile_name feeds
+    // dot_token/dot_domain *and* the socket name, and nano_config_init() runs
+    // first thing in that phase. It also copies the profile name out of the
     // iterator's storage, so it has to run while `arg_it` is still alive
     // (deinit is deferred to the end).
     cli.apply(opts);
 
-    // Create root_dir/cache_dir now (the same directories nano_config_init()
-    // will compute later), because the socket may live there and has to exist
+    // Startup phase 1: config paths and directories (no network, no stdin),
+    // because the socket may live in one of those directories and has to exist
     // before we bind. This is what made the first run on macOS fail before.
-    translated.nanotodon_init_dirs();
+    translated.nanotodon_prepare_paths();
 
     // Bind before touching the network: a failed bind must exit before reading
     // a token or running the OAuth dance. Requests queue in the kernel backlog
@@ -93,10 +93,11 @@ pub fn main(init: std.process.Init) !void {
     };
     std.debug.print("listening on {s}\n", .{socket_path});
 
-    // Config, access token, locale and the queue. No threads yet: the two
-    // blocking loops below are started here, on real OS threads, rather than
-    // inside C.
-    translated.nanotodon_init();
+    // Startup phases 2 and 3, only after the socket is bound: loading the token
+    // can block on the OAuth prompt, and the queue has to exist before any
+    // thread can enqueue into it.
+    translated.nanotodon_authenticate();
+    translated.nanotodon_runtime();
 
     // The stream loop blocks in curl forever, so it must not be an `Io` task:
     // an `io.async` task would occupy a pool worker permanently and, when

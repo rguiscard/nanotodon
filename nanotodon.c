@@ -731,7 +731,7 @@ static void get_timeline(void)
 	slist1 = NULL;
 }
 
-// CLIオプションを反映する(src/cli.zig から nanotodon_init() の前に一度だけ呼ばれる)
+// CLIオプションを反映する(src/cli.zig から nanotodon_prepare_paths() の前に一度だけ呼ばれる)
 void nanotodon_apply_cli_options(const struct nanotodon_cli_options *o)
 {
 	monoflag = o->mono ? 1 : 0;
@@ -887,24 +887,30 @@ retry1:
 	}
 }
 
-// 設定ディレクトリだけを先に用意する。src/main.zig がソケットを bind する前に呼ぶ
-// (nano_config_init() の中でも同じことが起きるが、何度呼んでも安全)。
-void nanotodon_init_dirs(void)
+// ---- src/main.zig から呼ばれる起動フェーズ ----
+// 順番が意味を持つので、まとめずに名前で分けてある。
+
+// config.root_dir/cache_dir を決めてディレクトリを作り、
+// dot_token/dot_domain を計算する。ネットワークも標準入力も使わないので、
+// ソケットを bind する前に呼べる。
+void nanotodon_prepare_paths(void)
 {
-	nano_config_init_dirs(&config);
+	nano_config_init(&config);
 }
 
-// ランタイムを初期化する。待ち受けループ本体は src/loop.zig、
-// ストリーミングのスレッドは src/main.zig が起動する。
-void nanotodon_init(void)
+// アクセストークンを用意する。無ければ OAuth 登録に入るので、
+// ここだけは標準入力を読んでブロックしうる。
+void nanotodon_authenticate(void)
 {
 	// libcurl の遅延初期化はスレッドセーフではないので、スレッド生成前に済ませる
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 
-	nano_config_init(&config);
-
 	setup_access_token();
+}
 
+// 端末とキューの初期化。スレッドを起動する前に済ませる。
+void nanotodon_runtime(void)
+{
 	setlocale(LC_ALL, "");
 
 	squeue_init();

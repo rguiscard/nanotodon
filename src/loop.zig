@@ -5,9 +5,9 @@
 //! toots arrive over the UNIX socket (src/server.zig), so nothing reads stdin
 //! at run time any more.
 //!
-//! Stdout discipline: once `translated.nanotodon_init()` has run, every write
-//! to stdout goes through libc stdio via `nanotodon_pump_output()`. Never write
-//! to the Zig `Io` writer from here, or the two independent buffers will
+//! Stdout discipline: from the moment the C startup phases run, every write to
+//! stdout goes through libc stdio via `nanotodon_pump_output()`. Never write to
+//! the Zig `Io` writer from here, or the two independent buffers will
 //! interleave.
 
 const std = @import("std");

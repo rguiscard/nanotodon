@@ -2,16 +2,25 @@
 // This file is the only translate-c input (see build.zig), so it has to stay
 // self-contained: plain C declarations, no #include of project headers.
 
-void nanotodon_init(void);
+// Startup phases, called from src/main.zig in this order:
+//   prepare_paths -> authenticate -> runtime
+// The order matters, so they are separate calls rather than one entry point.
+
+// Resolves config.root_dir/cache_dir, creates the directories and computes the
+// token/domain paths. Touches neither the network nor stdin, so it can run
+// before the socket is bound.
+void nanotodon_prepare_paths(void);
+
+// Loads the access token, or runs the interactive OAuth registration (may block
+// on stdin). Also initialises libcurl.
+void nanotodon_authenticate(void);
+
+// Locale, output queue and (if enabled) Sixel. Must run before the threads start.
+void nanotodon_runtime(void);
 
 // Runs the blocking streaming loop (curl SSE). Blocking, so src/main.zig starts
 // it on its own thread; it never returns unless the process dies.
 void nanotodon_stream_loop(void);
-
-// Creates the config directories (root_dir/cache_dir) without computing the
-// token/domain paths, so main() can call it before binding the socket.
-// Idempotent; may exit on a fatal setup error, like nano_config_init().
-void nanotodon_init_dirs(void);
 
 // Hook called by the Zig render loop (src/loop.zig).
 void nanotodon_pump_output(void);
@@ -32,7 +41,7 @@ void nanotodon_pump_output(void);
 int nanotodon_post_toot(const char *status, int status_len, int visibility, char *errbuf, int errlen);
 
 // Command line options. Parsed in Zig (src/cli.zig), then handed over with a
-// single call to nanotodon_apply_cli_options() before nanotodon_init() runs.
+// single call to nanotodon_apply_cli_options() before nanotodon_prepare_paths() runs.
 typedef struct nanotodon_cli_options {
 	int mono;             // -mono
 	int unlock;           // -unlock

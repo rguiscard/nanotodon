@@ -8,7 +8,7 @@
 //!   4. `$HOME/.config/nanotodon/nanotodon[-<profile>].sock`
 //!
 //! Rules 3 and 4 mirror `root_dir` in config.c: the server calls
-//! `nanotodon_init_dirs()` *before* binding, which creates exactly that
+//! `nanotodon_prepare_paths()` *before* binding, which creates exactly that
 //! directory. `toot` has no C to ask, hence both sides use this same pure
 //! environment rule. On Linux `$XDG_RUNTIME_DIR` wins, so the socket stays out
 //! of the config directory there; on macOS/BSD it lands next to token/domain.
