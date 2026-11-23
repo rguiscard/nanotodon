@@ -12,7 +12,6 @@
 #include "nanotodon.h"
 #include "image.h"
 #include "utils.h"
-#include "config.h"
 #include "src/headers.h"
 
 #include <curl/curl.h>
@@ -40,8 +39,8 @@ static void generate_hash(const char *, char *);
 
 void image_init(void)
 {
-	strcpy(cpath_buffer, config.cache_dir);
-	cpath_ptr = cpath_buffer + strlen(config.cache_dir);
+	strcpy(cpath_buffer, nanotodon_cache_dir());
+	cpath_ptr = cpath_buffer + strlen(cpath_buffer);
 }
 
 // FNV-1a over the URI. The cache key only has to be stable on one machine, so a
@@ -70,7 +69,7 @@ void print_image(sbctx_t *sbctx, char *uri)
 	generate_hash(uri, hash);
 	snprintf(cpath, sizeof cpath, "/%s.kit", hash);
 
-	if(strlen(config.cache_dir) + strlen(cpath) + 1 > sizeof cpath_buffer) return;
+	if(strlen(nanotodon_cache_dir()) + strlen(cpath) + 1 > sizeof cpath_buffer) return;
 	strcpy(cpath_ptr, cpath);
 
 	FILE *cfp = fopen(cpath_buffer, "rb");

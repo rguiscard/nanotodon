@@ -1,8 +1,7 @@
-//! Configuration: paths, directories and the access token.
-//!
-//! This is the Zig half of what used to be `config.c` plus the token half of
-//! `setup_access_token()`. Names and file formats are unchanged from the C
-//! version, so existing installations keep working:
+//! Configuration: paths, directories, the access token and the per-instance
+//! app registration. Everything the old `config.c` and `setup_access_token()`
+//! did lives here now. Names and file formats are unchanged from the C version,
+//! so existing installations keep working:
 //!
 //!   <root>/token<profile>      raw JSON body of POST /oauth/token
 //!   <root>/domain<profile>     instance hostname, no trailing newline
@@ -98,6 +97,50 @@ pub const Config = struct {
         if (trimmed.len == 0) return null;
         return try dupeZ(arena, trimmed);
     }
+
+    /// `<root_dir>/app_token/<domain>`: one registered client per instance,
+    /// shared by all profiles (that is what the C version did). Creates the
+    /// `app_token` directory, so the returned path is always writable. The
+    /// error set is inferred because this is the one path helper that does I/O.
+    pub fn appTokenPath(
+        self: Config,
+        arena: std.mem.Allocator,
+        io: std.Io,
+        domain: []const u8,
+    ) ![:0]const u8 {
+        const dir = try printZ(arena, "{s}/app_token", .{self.root_dir});
+        const path = try printZ(arena, "{s}/{s}", .{ dir, domain });
+        try makeDir(io, dir);
+        return path;
+    }
+
+    /// Raw body of the `/api/v1/apps` response, or null when the instance was
+    /// never registered (or the file is unreadable, which just means "register
+    /// again").
+    pub fn readAppToken(
+        self: Config,
+        arena: std.mem.Allocator,
+        io: std.Io,
+        domain: []const u8,
+    ) ?[]const u8 {
+        const path = self.appTokenPath(arena, io, domain) catch return null;
+        return readFile(arena, io, path) catch null;
+    }
+
+    /// Instance hostname, written without a trailing newline so the file stays
+    /// byte-compatible with the C version.
+    pub fn saveDomain(self: Config, io: std.Io, domain: []const u8) !void {
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = self.domain_path, .data = domain });
+    }
+
+    /// Raw `/oauth/token` response body. The file holds an access token, so it
+    /// is restricted to the owner; the C version left it to the umask.
+    pub fn saveToken(self: Config, io: std.Io, body: []const u8) !void {
+        const file = try std.Io.Dir.cwd().createFile(io, self.token_path, .{});
+        defer file.close(io);
+        file.setPermissions(io, ownerOnlyPermissions()) catch {};
+        try file.writeStreamingAll(io, body);
+    }
 };
 
 /// Directory the UNIX socket may live in: `$XDG_RUNTIME_DIR` when set, else
@@ -166,6 +209,15 @@ fn withProfile(
 /// appears when needed — the same effect the old per-component mkdir had.
 fn makeDir(io: std.Io, path: []const u8) !void {
     try std.Io.Dir.cwd().createDirPath(io, path);
+}
+
+/// `-rw-------` on POSIX: the token file is a secret. `Permissions` is an enum
+/// over the platform's mode type, so it cannot be written as a literal.
+fn ownerOnlyPermissions() std.Io.File.Permissions {
+    // POSIX exposes `fromMode`; the Windows enum has no modes at all.
+    if (comptime @hasDecl(std.Io.File.Permissions, "fromMode"))
+        return .fromMode(0o600);
+    return .default_file;
 }
 
 fn readFile(arena: std.mem.Allocator, io: std.Io, path: []const u8) ![]u8 {
@@ -281,4 +333,64 @@ test "a token file without access_token needs registration" {
     };
 
     try testing.expect((try cfg.readToken(arena, io)) == null);
+}
+
+test "appTokenPath lives under app_token and creates the directory" {
+    const io = testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const root = "/tmp/nanotodon-test-apptoken";
+    defer std.Io.Dir.cwd().deleteTree(io, root) catch {};
+
+    const cfg = Config{
+        .profile = null,
+        .root_dir = root,
+        .cache_dir = root,
+        .token_path = root ++ "/token",
+        .domain_path = root ++ "/domain",
+    };
+
+    // Nothing cached yet, and no directory either.
+    try testing.expect(cfg.readAppToken(arena, io, "example.social") == null);
+
+    const path = try cfg.appTokenPath(arena, io, "example.social");
+    try testing.expectEqualStrings("/tmp/nanotodon-test-apptoken/app_token/example.social", path);
+
+    // Building the path created the directory, so it can be written right away.
+    try std.Io.Dir.cwd().writeFile(io, .{
+        .sub_path = path,
+        .data = "{\"client_id\":\"cid\",\"client_secret\":\"cs\"}",
+    });
+    try testing.expectEqualStrings(
+        "{\"client_id\":\"cid\",\"client_secret\":\"cs\"}",
+        cfg.readAppToken(arena, io, "example.social").?,
+    );
+}
+
+test "saveDomain and saveToken round-trip through the readers" {
+    const io = testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const root = "/tmp/nanotodon-test-save";
+    defer std.Io.Dir.cwd().deleteTree(io, root) catch {};
+    try std.Io.Dir.cwd().createDirPath(io, root);
+
+    const cfg = Config{
+        .profile = null,
+        .root_dir = root,
+        .cache_dir = root,
+        .token_path = root ++ "/token",
+        .domain_path = root ++ "/domain",
+    };
+
+    // The domain file must not gain a newline: older binaries read it back.
+    try cfg.saveDomain(io, "example.social");
+    try testing.expectEqualStrings("example.social", (try cfg.readDomain(arena, io)).?);
+
+    try cfg.saveToken(io, "{\"access_token\":\"tok\",\"scope\":\"read\"}");
+    try testing.expectEqualStrings("tok", (try cfg.readToken(arena, io)).?);
 }

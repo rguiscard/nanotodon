@@ -11,8 +11,6 @@
 #include "sjson.h"
 
 #include "nanotodon.h"
-#include "config.h"
-#include "messages.h"
 #include "sbuf.h"
 #include "squeue.h"
 #include "utils.h"
@@ -39,14 +37,10 @@ static void (*streaming_received_handler)(void);
 // 受信したストリーミングを処理する関数のポインタ
 static void (*stream_event_handler)(struct sjson_node *);
 
-// インスタンスにクライアントを登録する
-static void do_create_client(char *, char *);
 
 // Timelineの受信
 static void get_timeline(void);
 
-// 承認コードを使ったOAuth処理
-static void do_oauth(char *, char *, char *);
 
 // ストリーミングでのToot受信処理,stream_event_handlerへ代入
 static void stream_event_update(struct sjson_node *);
@@ -60,8 +54,8 @@ static char access_token[256];
 // ドメイン文字列
 char domain_string[256];
 
-// コンフィグファイルパス構造体
-struct nanotodon_config config;
+// 画像キャッシュのディレクトリ(nanotodon_set_cache_dir() が設定する)
+static char cache_dir_path[256];
 
 int monoflag = 0;
 static int hidlckflag = 1;
@@ -517,117 +511,6 @@ void nanotodon_stream_loop(void)
 	slist1 = NULL;
 }
 
-// インスタンスにクライアントを登録する
-static void do_create_client(char *domain, char *dot_ckcs)
-{
-	CURLcode ret;
-	CURL *hnd;
-	curl_mime *mime;
-	curl_mimepart *part;
-	char errbuf[CURL_ERROR_SIZE];
-
-	char json_name[256], *uri;
-
-	strcpy(json_name, dot_ckcs);
-
-	uri = create_uri_string("api/v1/apps");
-
-	// クライアントキーファイルをオープン
-	FILE *f = fopen(json_name, "wb");
-
-	memset(errbuf, 0, sizeof errbuf);
-
-	hnd = curl_easy_init();
-	mime = curl_mime_init(hnd);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "client_name");
-	curl_mime_data(part, "nanotodon", CURL_ZERO_TERMINATED);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "redirect_uris");
-	curl_mime_data(part, "urn:ietf:wg:oauth:2.0:oob", CURL_ZERO_TERMINATED);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "scopes");
-	curl_mime_data(part, "read write follow", CURL_ZERO_TERMINATED);
-	curl_easy_setopt(hnd, CURLOPT_URL, uri);
-	curl_easy_setopt(hnd, CURLOPT_NOPROGRESS, 1L);
-	curl_easy_setopt(hnd, CURLOPT_MIMEPOST, mime);
-	curl_easy_setopt(hnd, CURLOPT_USERAGENT, CURL_USERAGENT);
-	curl_easy_setopt(hnd, CURLOPT_MAXREDIRS, 50L);
-	curl_easy_setopt(hnd, CURLOPT_CUSTOMREQUEST, "POST");
-	curl_easy_setopt(hnd, CURLOPT_TCP_KEEPALIVE, 1L);
-	curl_easy_setopt(hnd, CURLOPT_WRITEDATA, f);	// データの保存先ファイルポインタを指定
-	curl_easy_setopt(hnd, CURLOPT_ERRORBUFFER, errbuf);
-
-	ret = curl_easy_perform(hnd);
-	if(ret != CURLE_OK) curl_fatal(ret, errbuf);
-
-	fclose(f);
-
-	curl_mime_free(mime);
-	mime = NULL;
-	curl_easy_cleanup(hnd);
-	hnd = NULL;
-	free(uri);
-}
-
-// 承認コードを使ったOAuth処理
-static void do_oauth(char *code, char *ck, char *cs)
-{
-	char fields[512];
-	sprintf(fields, "client_id=%s&client_secret=%s&grant_type=authorization_code&code=%s&scope=read%%20write%%20follow", ck, cs, code);
-
-	// トークンファイルをオープン
-	FILE *f = fopen(config.dot_token, "wb");
-
-	CURLcode ret;
-	CURL *hnd;
-	curl_mime *mime;
-	curl_mimepart *part;
-	char errbuf[CURL_ERROR_SIZE], *uri;
-
-	memset(errbuf, 0, sizeof errbuf);
-
-	uri = create_uri_string("oauth/token");
-
-	hnd = curl_easy_init();
-	mime = curl_mime_init(hnd);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "grant_type");
-	curl_mime_data(part, "authorization_code", CURL_ZERO_TERMINATED);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "redirect_uri");
-	curl_mime_data(part, "urn:ietf:wg:oauth:2.0:oob", CURL_ZERO_TERMINATED);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "client_id");
-	curl_mime_data(part, ck, CURL_ZERO_TERMINATED);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "client_secret");
-	curl_mime_data(part, cs, CURL_ZERO_TERMINATED);
-	part = curl_mime_addpart(mime);
-	curl_mime_name(part, "code");
-	curl_mime_data(part, code, CURL_ZERO_TERMINATED);
-	curl_easy_setopt(hnd, CURLOPT_URL, uri);
-	curl_easy_setopt(hnd, CURLOPT_NOPROGRESS, 1L);
-	curl_easy_setopt(hnd, CURLOPT_MIMEPOST, mime);
-	curl_easy_setopt(hnd, CURLOPT_USERAGENT, CURL_USERAGENT);
-	curl_easy_setopt(hnd, CURLOPT_MAXREDIRS, 50L);
-	curl_easy_setopt(hnd, CURLOPT_CUSTOMREQUEST, "POST");
-	curl_easy_setopt(hnd, CURLOPT_TCP_KEEPALIVE, 1L);
-	curl_easy_setopt(hnd, CURLOPT_WRITEDATA, f);	// データの保存先ファイルポインタを指定
-	curl_easy_setopt(hnd, CURLOPT_ERRORBUFFER, errbuf);
-
-	ret = curl_easy_perform(hnd);
-	if(ret != CURLE_OK) curl_fatal(ret, errbuf);
-
-	fclose(f);
-
-	curl_mime_free(mime);
-	mime = NULL;
-	curl_easy_cleanup(hnd);
-	hnd = NULL;
-	free(uri);
-}
-
 // curlから呼び出されるHTL受信関数
 static size_t htl_callback(void* ptr, size_t size, size_t nmemb, void* data) {
 	if (size * nmemb == 0)
@@ -746,131 +629,19 @@ void nanotodon_apply_cli_options(const struct nanotodon_cli_options *o)
 	}
 }
 
-// 初回登録: ドメイン入力 → クライアント登録 → OAuth の順でトークンを取得し、
-// トークンファイルに書き出す(読み直しは Zig 側 src/config.zig が行う)。
-// 標準入力を読むので、ここだけはブロックしうる。
-void nanotodon_register(void)
-{
-	char *env_lang = getenv("LANG");
-	int msg_lang = 0;
-
-	if(env_lang && !strcmp(env_lang,"ja_JP.UTF-8")) msg_lang = 1;
-
-	{
-		char domain[256];
-		char *ck;
-		char *cs;
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_WELCOME]);
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_WEL_FIRST]);
-retry1:
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_INPUT_DOMAIN]);
-		printf(">");
-		scanf("%255s", domain);
-		printf("\n");
-
-		// ドメイン名を保存する
-		FILE *f2 = fopen(config.dot_domain, "wb");
-		fprintf(f2, "%s", domain);
-		fclose(f2);
-
-		char dot_ckcs[256];
-		if (nano_config_app_token_filename(&config, domain, dot_ckcs, sizeof(dot_ckcs)) >= sizeof(dot_ckcs)) {
-			fprintf(stderr, "FATAL: Can't allocate memory. Too long filename.\n");
-			exit(EXIT_FAILURE);
-		}
-
-		char json_name[256];
-		strcpy(json_name, dot_ckcs);
-		strcpy(domain_string, domain);
-
-		// クライアントキーファイルをオープン
-		FILE *ckcs = fopen(json_name, "rb");
-		if(!ckcs) {
-			// なければ作る
-			do_create_client(domain, dot_ckcs);
-		} else {
-			// あったら閉じる
-			fclose(ckcs);
-		}
-
-		// クライアントキーファイルを読む
-		struct sjson_context *ctx;
-		char *json;
-		struct sjson_node *cko, *cso;
-		struct sjson_node *jobj_from_file = read_json_from_file(json_name, &json, &ctx);
-		int r1 = read_json_fom_path(jobj_from_file, "client_id", &cko);
-		int r2 = read_json_fom_path(jobj_from_file, "client_secret", &cso);
-		if(!r1 || !r2) {
-			// もしおかしければ最初まで戻る
-			printf("%s", nano_msg_list[msg_lang][NANO_MSG_SOME_WRONG_DOMAIN]);
-			remove(json_name);
-			remove(config.dot_domain);
-			goto retry1;
-		}
-		ck = strdup(cko->string_);
-		cs = strdup(cso->string_);
-
-		sjson_destroy_context(ctx);
-		free(json);
-
-		char code[256];
-
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_AUTHCATION]);
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_OAUTH_URL]);
-
-		// 認証用URLを表示、コードを入力させる
-		printf("https://%s/oauth/authorize?client_id=%s&response_type=code&redirect_uri=urn:ietf:wg:oauth:2.0:oob&scope=read%%20write%%20follow\n", domain, ck);
-		printf(">");
-		scanf("%255s", code);
-		printf("\n");
-
-		// 改行読み飛ばし
-		getchar();
-
-		// 承認コードで認証
-		do_oauth(code, ck, cs);
-		free(ck);
-		free(cs);
-
-		// トークンファイルを読む
-		struct sjson_node *token;
-		jobj_from_file = read_json_from_file(config.dot_token, &json, &ctx);
-		int r3 = read_json_fom_path(jobj_from_file, "access_token", &token);
-		if(!r3) {
-			// もしおかしければ最初まで戻る
-			printf("%s", nano_msg_list[msg_lang][NANO_MSG_SOME_WRONG_OAUTH]);
-			remove(json_name);
-			remove(config.dot_domain);
-			remove(config.dot_token);
-			goto retry1;
-		}
-
-		// 認証トークンはファイルに書かれている。読み直しと
-		// ヘッダ文字列の組み立ては Zig 側が行う。
-		printf("%s", nano_msg_list[msg_lang][NANO_MSG_FINISH]);
-
-		sjson_destroy_context(ctx);
-		free(json);
-	}
-}
-
 // ---- src/main.zig から呼ばれる起動フェーズ ----
 // 順番が意味を持つので、まとめずに名前で分けてある。
 
-// libcurl の遅延初期化はスレッドセーフではないので、スレッド生成前に済ませる
-void nanotodon_curl_init(void)
+// Zig(src/config.zig)が決めた画像キャッシュのディレクトリを受け取る。
+// C 側に残っているパスはこれだけ(src/image.c が使う)。
+void nanotodon_set_cache_dir(const char *dir)
 {
-	curl_global_init(CURL_GLOBAL_DEFAULT);
+	snprintf(cache_dir_path, sizeof(cache_dir_path), "%s", dir);
 }
 
-// Zig(src/config.zig)が決めたパスを受け取る。C 側ではもうパスを計算しない。
-void nanotodon_set_paths(const char *root_dir, const char *cache_dir,
-                         const char *token_path, const char *domain_path)
+const char *nanotodon_cache_dir(void)
 {
-	snprintf(config.root_dir, sizeof(config.root_dir), "%s", root_dir);
-	snprintf(config.cache_dir, sizeof(config.cache_dir), "%s", cache_dir);
-	snprintf(config.dot_token, sizeof(config.dot_token), "%s", token_path);
-	snprintf(config.dot_domain, sizeof(config.dot_domain), "%s", domain_path);
+	return cache_dir_path;
 }
 
 // ヘッダ用の文字列とドメインを設定する。

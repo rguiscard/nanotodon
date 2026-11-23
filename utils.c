@@ -76,31 +76,6 @@ char *create_uri_string(const char *api)
 	return s;
 }
 
-sjson_node *read_json_from_file(const char *path, char **json_p, sjson_context **ctx_p)
-{
-	char *json;
-	FILE *f = fopen(path, "rb");
-
-	fseek(f, 0, SEEK_END);
-	long fsize = ftell(f);
-	fseek(f, 0, SEEK_SET);
-
-	json = malloc(fsize + 1);
-	*json_p = json;
-
-	fread(json, fsize, 1, f);
-	fclose(f);
-
-	json[fsize] = 0;
-
-	sjson_context* ctx = sjson_create_context(0, 0, NULL);
-	*ctx_p = ctx;
-
-	struct sjson_node *jobj_from_string = sjson_decode(ctx, json);
-
-	return jobj_from_string;
-}
-
 // jsonツリーをパス形式(ex. "account/display_name")で掘ってjson_objectを取り出す
 int read_json_fom_path(struct sjson_node *obj, const char *path, struct sjson_node **dst)
 {

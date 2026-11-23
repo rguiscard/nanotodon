@@ -58,16 +58,12 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
     const c_sources_base = [_][]const u8{
-        "config.c",
-        "messages.c",
         "nanotodon.c",
         "sbuf.c",
         "squeue.c",
         "utils.c",
     };
     const c_sources_image = [_][]const u8{
-        "config.c",
-        "messages.c",
         "nanotodon.c",
         "sbuf.c",
         "squeue.c",

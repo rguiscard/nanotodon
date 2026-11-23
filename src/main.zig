@@ -2,6 +2,8 @@ const std = @import("std");
 const Io = std.Io;
 
 const translated = @import("translated");
+const curl = @import("curl");
+const auth = @import("auth.zig");
 const config = @import("config.zig");
 const cli = @import("cli.zig");
 const kitty = @import("kitty.zig");
@@ -75,14 +77,9 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
 
-    // Hand the paths to C: it no longer computes them, it only uses them (token
-    // file for registration, cache dir for the image cache).
-    translated.nanotodon_set_paths(
-        cfg.root_dir.ptr,
-        cfg.cache_dir.ptr,
-        cfg.token_path.ptr,
-        cfg.domain_path.ptr,
-    );
+    // Hand the one path C still needs to C: it no longer computes anything and
+    // the image cache is all that is left there (src/image.c).
+    translated.nanotodon_set_cache_dir(cfg.cache_dir.ptr);
 
     // Bind before touching the network: a failed bind must exit before reading
     // a token or running the OAuth dance. Requests queue in the kernel backlog
@@ -122,12 +119,20 @@ pub fn main(init: std.process.Init) !void {
 
     // libcurl's lazy init is not thread-safe, so it happens once, before the
     // registration below and before any thread exists.
-    translated.nanotodon_curl_init();
+    curl.globalInit() catch |err| {
+        std.debug.print("nanotodon: cannot initialise libcurl: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
 
-    // Startup phase 2: credentials. Reading the token is now Zig's job; only
-    // registration (which prompts on stdin and does two POSTs) is still C.
+    // Startup phase 2: credentials. Both reading the token and the whole
+    // first-run dialog are Zig now.
     if (!loadCredentials(arena, io, cfg)) {
-        translated.nanotodon_register();
+        auth.register(io, arena, cfg, stdout_writer) catch |err| {
+            std.debug.print("nanotodon: registration failed: {s}\n", .{@errorName(err)});
+            std.process.exit(1);
+        };
+        // The dialog writes the token file; handing it to C is the same step as
+        // on a normal start.
         if (!loadCredentials(arena, io, cfg)) {
             std.debug.print("nanotodon: registration did not produce an access token\n", .{});
             std.process.exit(1);
@@ -208,6 +213,7 @@ export fn nanotodon_kitty_emit(
 // executable.
 test {
 //    _ = cli;
+    std.testing.refAllDecls(auth);
     std.testing.refAllDecls(cli);
     std.testing.refAllDecls(config);
     std.testing.refAllDecls(kitty);

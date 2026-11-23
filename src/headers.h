@@ -3,23 +3,16 @@
 // self-contained: plain C declarations, no #include of project headers.
 
 // Startup phases, called from src/main.zig in this order:
-//   curl_init -> set_paths -> (set_credentials | register) -> runtime
-// Paths are computed in Zig (src/config.zig).
+//   set_cache_dir -> set_credentials -> runtime
+// Everything else (paths, credentials, first-run registration) is Zig now;
+// src/image.c is the only C code that still needs a path.
 
-// Initialises libcurl. Must happen once, before any thread uses curl.
-void nanotodon_curl_init(void);
-
-// Hands the Zig-computed paths to C, which no longer derives them itself.
-void nanotodon_set_paths(const char *root_dir, const char *cache_dir,
-                         const char *token_path, const char *domain_path);
+// Hands the Zig-computed image cache directory to C.
+void nanotodon_set_cache_dir(const char *dir);
 
 // Sets the curl header value ("Authorization: Bearer ...") and the instance
 // hostname.
 void nanotodon_set_credentials(const char *auth_header, const char *domain);
-
-// Interactive first-run registration: prompts for the instance, registers the
-// app and runs OAuth, writing the token file. Reads stdin, so it may block.
-void nanotodon_register(void);
 
 // Locale, output queue and (if built with -Dimage) the image cache path.
 // Must run before the threads start.
