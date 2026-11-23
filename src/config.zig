@@ -95,7 +95,7 @@ pub const Config = struct {
 
         const trimmed = std.mem.trim(u8, raw, " \t\r\n");
         if (trimmed.len == 0) return null;
-        return try dupeZ(arena, trimmed);
+        return try arena.dupeSentinel(u8, trimmed, 0);
     }
 
     /// `<root_dir>/app_token/<domain>`: one registered client per instance,
@@ -227,7 +227,7 @@ fn readFile(arena: std.mem.Allocator, io: std.Io, path: []const u8) ![]u8 {
 fn printZ(arena: std.mem.Allocator, comptime fmt: []const u8, args: anytype) Error![:0]const u8 {
     var buf: [max_path + 1]u8 = undefined;
     const path = std.mem.printSentinel(&buf, fmt, args, 0) catch return Error.PathTooLong;
-    return try dupeZ(arena, path);
+    return try arena.dupeSentinel(u8, path, 0);
 }
 
 fn copyInto(buf: []u8, s: []const u8) PathError![]const u8 {
@@ -238,12 +238,6 @@ fn copyInto(buf: []u8, s: []const u8) PathError![]const u8 {
 
 fn printInto(buf: []u8, comptime fmt: []const u8, args: anytype) PathError![]const u8 {
     return std.mem.print(buf, fmt, args) catch PathError.PathTooLong;
-}
-
-fn dupeZ(arena: std.mem.Allocator, s: []const u8) Error![:0]const u8 {
-    const out = try arena.allocSentinel(u8, s.len, 0);
-    @memcpy(out, s);
-    return out;
 }
 
 fn usable(v: ?[]const u8) ?[]const u8 {

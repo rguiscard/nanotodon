@@ -189,8 +189,7 @@ fn handleOne(srv: *Server, stream: net.Stream) !void {
         .request => |req| {
             // C wants a `const char *`; allocate the terminator rather than
             // casting away the sentinel requirement.
-            const status_z = try arena.allocSentinel(u8, req.status.len, 0);
-            @memcpy(status_z, req.status);
+            const status_z = try arena.dupeSentinel(u8, req.status, 0);
 
             var err_buf: [512]u8 = @splat(0);
             if (srv.poster.post(status_z, req.visibility, &err_buf)) |message| {
