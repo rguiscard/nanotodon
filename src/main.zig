@@ -2,11 +2,12 @@ const std = @import("std");
 const Io = std.Io;
 
 const translated = @import("translated");
+const build_options = @import("build_options");
 const curl = @import("curl");
 const auth = @import("auth.zig");
 const config = @import("config.zig");
 const cli = @import("cli.zig");
-const kitty = @import("kitty.zig");
+const image = @import("image.zig");
 const proto = @import("proto.zig");
 const poster = @import("poster.zig");
 const server = @import("server.zig");
@@ -32,8 +33,6 @@ pub fn main(init: std.process.Init) !void {
     // Stdout is for the actual output of your application, for example if you
     // are implementing gzip, then only the compressed bytes should be sent to
     // stdout, not any debugging messages.
-    process_io = io;
-
     // Option handling lives on the Zig side now. The old C main() used to
     // `return -1` on bad arguments, which the shell reports as 255, so keep
     // that exit status.
@@ -80,10 +79,6 @@ pub fn main(init: std.process.Init) !void {
         }
         std.process.exit(1);
     };
-
-    // Hand the one path C still needs to C: it no longer computes anything and
-    // the image cache is all that is left there (src/image.c).
-    translated.nanotodon_set_cache_dir(cfg.cache_dir.ptr);
 
     // Bind before touching the network: a failed bind must exit before reading
     // a token or running the OAuth dance. Requests queue in the kernel backlog
@@ -148,21 +143,30 @@ pub fn main(init: std.process.Init) !void {
         };
     };
 
-    // Startup phase 3: locale, then the output queue (+ the image cache when
-    // built with -Dimage). The locale call moved here from C; nothing formats
-    // dates any more, but libc's numeric formatting in image.c still depends on
-    // it, so the process-wide call stays.
+    // Startup phase 3: locale, then the little state C still keeps. The locale
+    // call moved here from C; nothing formats dates any more, but libc's numeric
+    // formatting still depends on it, so the process-wide call stays.
     _ = std.c.setlocale(std.c.LC.ALL, "");
 
-    // Output queue and, with -Dimage, image_init() (which copies the cache dir
-    // handed over above).
     translated.nanotodon_runtime();
+
+    // The image cache is opened once, here, so the render path never has to
+    // care whether the directory is usable. Without -Dimage there is nothing to
+    // open and statuses are rendered as plain text.
+    const image_cache: ?Io.Dir = if (build_options.image_support)
+        Io.Dir.openDirAbsolute(io, cfg.cache_dir, .{}) catch |err| blk: {
+            std.debug.print("nanotodon: image attachments disabled: {s}: {s}\n", .{ cfg.cache_dir, @errorName(err) });
+            break :blk null;
+        }
+    else
+        null;
 
     // The stream loop blocks in curl forever, so it must not be an `Io` task:
     // an `io.async` task would occupy a pool worker permanently and, when
     // `async_limit` is 0 (single CPU, or `getCpuCount()` failing), would run
     // inline and never return to this function.
-    const stream_target = stream.targetOf(opts, creds.domain, creds.header);
+    var stream_target = stream.targetOf(opts, creds.domain, creds.header);
+    stream_target.image_cache = image_cache;
     const stream_thread = std.Thread.spawn(.{}, streamEntry, .{ io, stream_target }) catch |err| {
         std.debug.print("nanotodon: cannot start the streaming thread: {s}\n", .{@errorName(err)});
         std.process.exit(1);
@@ -220,27 +224,10 @@ fn loadCredentials(arena: std.mem.Allocator, io: std.Io, cfg: config.Config) ?po
     return .{ .domain = domain_z, .header = header };
 }
 
-/// C entry point for src/image.c (declared in src/headers.h). It lives in the
-/// root source file on purpose: Zig only emits `export` declarations from files
-/// that get analysed, and nothing inside Zig calls this — only C does. From
-/// src/kitty.zig the export was silently dropped and the link failed.
-export fn nanotodon_kitty_emit(
-    sbctx: ?*anyopaque,
-    rgba: ?*const anyopaque,
-    w: c_int,
-    h: c_int,
-) callconv(.c) void {
-    kitty.emit(sbctx, rgba, w, h);
-}
-
-/// C entry point for src/sbuf.c (declared in src/headers.h). `std.Io` cannot be
-/// passed through C, so this uses the same instance `main` was given.
-var process_io: std.Io = undefined;
-
-export fn nanotodon_out_write_zig(data: ?*const anyopaque, len: usize) callconv(.c) void {
-    const bytes: [*]const u8 = @ptrCast(data orelse return);
-    output.write(process_io, bytes[0..len]);
-}
+// No C file drives Zig output any more: images are assembled in Zig
+// (src/image.zig) and leave with their status through one output.write(), so
+// there is no `export` that has to smuggle a std.Io through C. Anything C
+// writes to stdout directly would break that atomicity.
 
 // `cli`, `proto`, `server`, `socketpath` and `stream` are only referenced from
 // main(), which is not analyzed in a test build, so without touching them here
@@ -250,7 +237,7 @@ test {
     std.testing.refAllDecls(auth);
     std.testing.refAllDecls(cli);
     std.testing.refAllDecls(config);
-    std.testing.refAllDecls(kitty);
+    std.testing.refAllDecls(image);
     std.testing.refAllDecls(output);
     std.testing.refAllDecls(poster);
     std.testing.refAllDecls(proto);

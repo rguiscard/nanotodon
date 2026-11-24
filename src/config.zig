@@ -5,7 +5,7 @@
 //!   <root>/token/<profile>      raw JSON body of POST /oauth/token
 //!   <root>/domain/<profile>     instance hostname, no trailing newline
 //!   <root>/app_token/<domain>   raw JSON body of POST /api/v1/apps
-//!   <cache>/nanotodon/          image cache (image.c)
+//!   <cache>/nanotodon/          image cache (src/image.zig)
 //!
 //! `default` is the profile used when the command line names none.
 //!

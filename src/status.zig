@@ -4,19 +4,18 @@
 //! This replaces the C `stream_event_update()`. The first version is
 //! deliberately plain: the HTML `content` is printed as-is, including its tags,
 //! because a correct stripper is a separate job and was not asked for yet. The
-//! same goes for colour, emoji and the Kitty image path.
+//! same goes for colour and emoji.
 //!
 //! A boost (`reblog`) is **not** expanded: the status is rendered as it stands,
 //! preceded by a `Boosted by {acct}` line, so a boost is recognisable without
 //! rendering someone else's toot in its place.
 //!
-//! Every status becomes one string, handed to `nanotodon_enqueue_text()` so it
-//! leaves on the same queue as every other message and prints atomically.
+//! Every status becomes one string, images included, and leaves through a
+//! single `output.write()`, so a status and its pictures print atomically.
 
 const std = @import("std");
 const output = @import("out.zig");
-const translated = @import("translated");
-const build_options = @import("build_options");
+const images = @import("image.zig");
 
 /// The fields that are read. Everything else in a status is ignored, so a schema
 /// addition cannot break rendering.
@@ -41,7 +40,16 @@ const Wire = struct {
 
 /// Renders one status into `out`. Returns false when the payload is not a JSON
 /// object this code understands.
-pub fn render(allocator: std.mem.Allocator, json: []const u8, out: *std.ArrayList(u8)) !bool {
+///
+/// `cache_dir` is where image attachments are cached; pass `null` to skip them
+/// (tests, or a build without -Dimage).
+pub fn render(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    cache_dir: ?std.Io.Dir,
+    json: []const u8,
+    out: *std.ArrayList(u8),
+) !bool {
     const parsed = std.json.parseFromSliceLeaky(Wire, allocator, json, .{
         .ignore_unknown_fields = true,
     }) catch return false;
@@ -81,20 +89,18 @@ pub fn render(allocator: std.mem.Allocator, json: []const u8, out: *std.ArrayLis
             const url = m.url orelse continue;
             const kind = m.type orelse "media";
 
-            // With -Dimage, the picture itself goes out first (its own atomic
-            // write), then the URL line below still says what it was.
-            if (build_options.image_support and std.mem.eql(u8, kind, "image")) {
-                if (allocator.dupeSentinel(u8, url, 0)) |url_z| {
-                    defer allocator.free(url_z);
-                    translated.nanotodon_print_image_zig(url_z.ptr);
-                } else |_| {}
+            // The picture, if there is one, is appended right after its URL
+            // line, inside the same buffer: writing it to stdout here put it
+            // before the toot and let the URL line overwrite its bottom rows.
+            if (cache_dir) |dir| {
+                try images.place(allocator, io, dir, out, kind, url);
+            } else {
+                try out.append(allocator, '[');
+                try out.appendSlice(allocator, kind);
+                try out.appendSlice(allocator, "] ");
+                try out.appendSlice(allocator, url);
+                try out.append(allocator, '\n');
             }
-
-            try out.append(allocator, '[');
-            try out.appendSlice(allocator, kind);
-            try out.appendSlice(allocator, "] ");
-            try out.appendSlice(allocator, url);
-            try out.append(allocator, '\n');
         }
     }
 
@@ -102,12 +108,12 @@ pub fn render(allocator: std.mem.Allocator, json: []const u8, out: *std.ArrayLis
 }
 
 /// Renders and queues one status. Returns false if the payload was not
-/// understood.
-pub fn deliver(io: std.Io, allocator: std.mem.Allocator, json: []const u8) bool {
+/// understood. `cache_dir` is the image cache, or `null` for text only.
+pub fn deliver(io: std.Io, allocator: std.mem.Allocator, cache_dir: ?std.Io.Dir, json: []const u8) bool {
     var line: std.ArrayList(u8) = .empty;
     defer line.deinit(allocator);
 
-    const ok = render(allocator, json, &line) catch return false;
+    const ok = render(io, allocator, cache_dir, json, &line) catch return false;
     if (!ok or line.items.len == 0) return false;
 
     output.write(io, line.items);
@@ -120,10 +126,17 @@ pub fn deliver(io: std.Io, allocator: std.mem.Allocator, json: []const u8) bool 
 
 const testing = std.testing;
 
+/// `render` takes an `Io` for its image lookups. These tests use no cache, so a
+/// fresh single-threaded instance is enough, and it needs no cleanup.
+fn testIo() std.Io {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    return threaded.io();
+}
+
 fn renderAlloc(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
-    try testing.expect(try render(allocator, json, &out));
+    try testing.expect(try render(testIo(), allocator, null, json, &out));
     return out.toOwnedSlice(allocator);
 }
 
@@ -200,6 +213,7 @@ test "a non-object payload is rejected" {
     const arena = testing.allocator;
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(arena);
-    try testing.expect(!try render(arena, "[1,2,3]", &out));
-    try testing.expect(!try render(arena, "nope", &out));
+    try testing.expect(!try render(testIo(), arena, null, "[1,2,3]", &out));
+    try testing.expect(!try render(testIo(), arena, null, "nope", &out));
 }
+

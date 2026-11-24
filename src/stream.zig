@@ -39,6 +39,10 @@ pub const Target = struct {
     /// What follows `api/v1/timelines/`: `home`, `public?local=true`, …
     timeline: []const u8,
     limit: u31,
+    /// Where image attachments are cached (src/image.zig). Also the switch:
+    /// the directory is only opened when built with -Dimage, so a plain build
+    /// neither renders pictures nor logs an error about the missing directory.
+    image_cache: ?std.Io.Dir = null,
 };
 
 // ---------------------------------------------------------------------------
@@ -197,6 +201,8 @@ const Sink = struct {
     framer: SseFramer,
     allocator: std.mem.Allocator,
     io: std.Io,
+    /// Needed to fetch image attachments for the statuses that carry them.
+    target: Target,
     /// Set when framing failed; makes libcurl abort with a write error.
     failed: bool = false,
     chunks: usize = 0,
@@ -227,14 +233,14 @@ const Sink = struct {
             traceBytes(@tagName(out.kind), out.json);
 
             switch (out.kind) {
-                // Notifications are formatted here; the toot display is still C.
+                // Both are rendered in Zig now; each one writes atomically.
                 .notification => {
                     if (!notify.deliver(self.io, self.allocator, out.json)) {
                         trace("notification was not understood; dropped", .{});
                     }
                 },
                 .update => {
-                    if (!status_render.deliver(self.io, self.allocator, out.json)) {
+                    if (!status_render.deliver(self.io, self.allocator, self.target.image_cache, out.json)) {
                         trace("status was not understood; dropped", .{});
                     }
                 },
@@ -364,7 +370,7 @@ fn streamForever(io: std.Io, allocator: std.mem.Allocator, target: Target) void 
     const headers = HeaderList.init(target.auth_header.ptr);
     defer headers.deinit();
 
-    var sink: Sink = .{ .framer = .{}, .allocator = allocator, .io = io };
+    var sink: Sink = .{ .framer = .{}, .allocator = allocator, .io = io, .target = target };
     defer sink.framer.deinit(allocator);
 
     var errbuf: [c.CURL_ERROR_SIZE]u8 = @splat(0);
@@ -442,13 +448,13 @@ fn fetchTimeline(io: std.Io, allocator: std.mem.Allocator, target: Target) void 
         return std.debug.print("nanotodon: timeline: HTTP {d}\n", .{status});
     }
     if (body.bytes.items.len == 0) return;
-    renderTimeline(io, allocator, body.bytes.items);
+    renderTimeline(io, allocator, target, body.bytes.items);
 }
 
 /// Renders a whole `api/v1/timelines/*` array. Statuses are queued oldest first
 /// (the array is walked backwards) so the newest ends up at the bottom, matching
 /// the C version.
-fn renderTimeline(io: std.Io, allocator: std.mem.Allocator, json: []const u8) void {
+fn renderTimeline(io: std.Io, allocator: std.mem.Allocator, target: Target, json: []const u8) void {
     const root = std.json.parseFromSliceLeaky(std.json.Value, allocator, json, .{}) catch {
         trace("timeline body is not JSON", .{});
         return;
@@ -473,7 +479,7 @@ fn renderTimeline(io: std.Io, allocator: std.mem.Allocator, json: []const u8) vo
 
         scratch.clearRetainingCapacity();
         std.json.Stringify.value(item, .{}, &scratch.writer) catch continue;
-        if (status_render.deliver(io, allocator, scratch.written())) shown += 1;
+        if (status_render.deliver(io, allocator, target.image_cache, scratch.written())) shown += 1;
     }
     trace("timeline: {d} item(s), {d} rendered", .{ root.array.items.len, shown });
 }

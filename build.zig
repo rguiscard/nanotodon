@@ -41,14 +41,15 @@ pub fn build(b: *std.Build) void {
     });
     curl_c.linkSystemLibrary("curl", .{});
 
-    // Kitty graphics support for image attachments (image.c). Off by default so
-    // a plain `zig build` behaves exactly as before; enable with
-    // `zig build -Dimage=true`. The switch is a C macro, because the decision is
-    // made where the renderer calls into image.c (src/nanotodon.c).
+    // Kitty graphics support for image attachments (src/image.zig, plus
+    // stb_image decoding in image.c). Off by default so a plain `zig build`
+    // behaves exactly as before; enable with `zig build -Dimage=true`. The
+    // switch is a C macro too, because image.c's stb_image block is the only
+    // C left in that path (src/headers.h is what Zig sees).
     const image = b.option(bool, "image", "Render image attachments (Kitty graphics)") orelse false;
 
-    // Lets Zig see the same switch, so src/status.zig only calls into image.c
-    // when that file is actually compiled in.
+    // Lets Zig see the same switch, so src/image.zig only fetches and decodes
+    // when image.c actually provides the decoder.
     const options = b.addOptions();
     options.addOption(bool, "image_support", image);
 

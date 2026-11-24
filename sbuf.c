@@ -39,22 +39,6 @@ void nputbuf(sbctx_t *sbctx, const void *d, int l)
 	sbctx->cacheptr += l;
 }
 
-// Append to an sbctx from outside C. src/kitty.zig builds the Kitty escape
-// stream and hands it over through this, so the Zig side never needs to know
-// the layout of sbctx_t.
-void nanotodon_sbuf_put(void *sbctx, const void *data, int len)
-{
-	nputbuf((sbctx_t *)sbctx, data, len);
-}
-
-// Hand finished bytes to the Zig output path (src/out.zig), which serialises
-// them against every other writer. image.c builds its escape sequence in an
-// sbctx_t and calls this once, so an image reaches the terminal as one unit.
-void nanotodon_out_write(const void *data, int len)
-{
-	nanotodon_out_write_zig(data, (size_t)len);
-}
-
 /*
 MEMO :
 
