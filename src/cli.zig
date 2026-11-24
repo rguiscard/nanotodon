@@ -228,12 +228,18 @@ test "profile without a value is fatal" {
     try testing.expectError(ParseError.TooFewArguments, parseArgv(&.{ "nanotodon", "-profile" }));
 }
 
-test "profile longer than the C buffer is rejected" {
-    const too_long: [256]u8 = @splat('x');
+test "profile longer than max_profile_len is rejected" {
+    const too_long: [config.max_profile_len + 1]u8 = @splat('x');
     try testing.expectError(
         ParseError.BadProfile,
         parseArgv(&.{ "nanotodon", "-profile", &too_long }),
     );
+}
+
+test "profile at max_profile_len is accepted" {
+    const ok: [config.max_profile_len]u8 = @splat('x');
+    const opts = try parseArgv(&.{ "nanotodon", "-profile", &ok });
+    try testing.expectEqual(@as(usize, config.max_profile_len), opts.profile.?.len);
 }
 
 test "profile with a path separator or empty is rejected" {
@@ -244,12 +250,6 @@ test "profile with a path separator or empty is rejected" {
 test "profile accepts letters, digits, dash and underscore" {
     const opts = try parseArgv(&.{ "nanotodon", "-profile", "Work-2_x" });
     try testing.expectEqualStrings("Work-2_x", opts.profile.?);
-}
-
-test "profile at the buffer limit is accepted" {
-    const ok: [255]u8 = @splat('x');
-    const opts = try parseArgv(&.{ "nanotodon", "-profile", &ok });
-    try testing.expectEqual(@as(usize, 255), opts.profile.?.len);
 }
 
 test "tllimit is clamped to 0..40" {

@@ -15,18 +15,22 @@
 
 const std = @import("std");
 
-/// Longest path we accept: the C side still stores them in `char[256]`.
+/// Longest directory path the socket helpers build into a stack buffer. Config
+/// paths are no longer bounded here: they go through `std.fs.path.joinZ` and the
+/// filesystem decides (a too-long one surfaces as `error.NameTooLong`).
 pub const max_path = 255;
 
 /// Profile used when the command line does not name one.
 pub const default_profile = "default";
 
-/// Longest profile name we accept; it becomes a config directory entry and part
-/// of the socket file name.
-pub const max_profile_len = 255;
+/// Longest profile name we accept. A profile is a file name (`token/<profile>`)
+/// and part of the socket name (`nanotodon-<profile>.sock`). The socket path is
+/// capped at 108 bytes (`std.Io.net.UnixAddress.max_len`), so 64 leaves room for
+/// the 16 bytes of fixed text and the socket directory in every normal setup.
+pub const max_profile_len = 64;
 
 /// A profile becomes a directory entry, so it is restricted to characters that
-/// cannot form `..` or a separator: `[A-Za-z0-9_-]`, one to 255 of them.
+/// cannot form `..` or a separator: `[A-Za-z0-9_-]`, one to `max_profile_len`.
 pub fn isValidProfile(name: []const u8) bool {
     if (name.len == 0 or name.len > max_profile_len) return false;
     for (name) |c| {
@@ -55,7 +59,7 @@ pub const Env = struct {
 pub const PathError = error{
     /// Neither `$XDG_CONFIG_HOME` nor `$HOME` is usable.
     NoHome,
-    /// A computed path does not fit `max_path`.
+    /// A directory does not fit the caller's buffer (see `socketDir`).
     PathTooLong,
 };
 
@@ -94,8 +98,8 @@ pub const Config = struct {
 
         // `saveToken`/`saveDomain` only create the file, so the per-profile
         // directories are made here, the way `appTokenPath` makes `app_token`.
-        const token_dir = try printZ(arena, "{s}/token", .{dirs.root});
-        const domain_dir = try printZ(arena, "{s}/domain", .{dirs.root});
+        const token_dir = try joinZ(arena, &.{ dirs.root, "token" });
+        const domain_dir = try joinZ(arena, &.{ dirs.root, "domain" });
         try makeDirOrReport(io, token_dir, blocked);
         try makeDirOrReport(io, domain_dir, blocked);
 
@@ -103,8 +107,8 @@ pub const Config = struct {
             .profile = name,
             .root_dir = dirs.root,
             .cache_dir = dirs.cache,
-            .token_path = try printZ(arena, "{s}/{s}", .{ token_dir, name }),
-            .domain_path = try printZ(arena, "{s}/{s}", .{ domain_dir, name }),
+            .token_path = try joinZ(arena, &.{ token_dir, name }),
+            .domain_path = try joinZ(arena, &.{ domain_dir, name }),
         };
     }
 
@@ -146,8 +150,8 @@ pub const Config = struct {
         io: std.Io,
         domain: []const u8,
     ) ![:0]const u8 {
-        const dir = try printZ(arena, "{s}/app_token", .{self.root_dir});
-        const path = try printZ(arena, "{s}/{s}", .{ dir, domain });
+        const dir = try joinZ(arena, &.{ self.root_dir, "app_token" });
+        const path = try joinZ(arena, &.{ dir, domain });
         try makeDir(io, dir);
         return path;
     }
@@ -215,22 +219,22 @@ fn createDirs(arena: std.mem.Allocator, io: std.Io, env: Env) !Dirs {
     if (xdg) |dirs| return dirs;
 
     const home = usable(env.home) orelse return Error.NoHome;
-    const root = try printZ(arena, "{s}/.nanotodon", .{home});
-    const cache = try printZ(arena, "{s}/.nanotodon/cache", .{home});
+    const root = try joinZ(arena, &.{ home, ".nanotodon" });
+    const cache = try joinZ(arena, &.{ home, ".nanotodon", "cache" });
     try makeDir(io, root);
     try makeDir(io, cache);
     return .{ .root = root, .cache = cache };
 }
 
 fn rootCandidate(arena: std.mem.Allocator, env: Env) Error![:0]const u8 {
-    if (usable(env.xdg_config_home)) |dir| return printZ(arena, "{s}/nanotodon", .{dir});
-    if (usable(env.home)) |dir| return printZ(arena, "{s}/.config/nanotodon", .{dir});
+    if (usable(env.xdg_config_home)) |dir| return joinZ(arena, &.{ dir, "nanotodon" });
+    if (usable(env.home)) |dir| return joinZ(arena, &.{ dir, ".config", "nanotodon" });
     return Error.NoHome;
 }
 
 fn cacheCandidate(arena: std.mem.Allocator, env: Env) Error![:0]const u8 {
-    if (usable(env.xdg_cache_home)) |dir| return printZ(arena, "{s}/nanotodon", .{dir});
-    if (usable(env.home)) |dir| return printZ(arena, "{s}/.cache/nanotodon", .{dir});
+    if (usable(env.xdg_cache_home)) |dir| return joinZ(arena, &.{ dir, "nanotodon" });
+    if (usable(env.home)) |dir| return joinZ(arena, &.{ dir, ".cache", "nanotodon" });
     return Error.NoHome;
 }
 
@@ -262,10 +266,10 @@ fn readFile(arena: std.mem.Allocator, io: std.Io, path: []const u8) ![]u8 {
     return std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(64 * 1024));
 }
 
-fn printZ(arena: std.mem.Allocator, comptime fmt: []const u8, args: anytype) Error![:0]const u8 {
-    var buf: [max_path + 1]u8 = undefined;
-    const path = std.mem.printSentinel(&buf, fmt, args, 0) catch return Error.PathTooLong;
-    return try arena.dupeSentinel(u8, path, 0);
+/// Join path components with the platform separator. No length check: the
+/// filesystem reports an over-long path as `error.NameTooLong` when it is used.
+fn joinZ(arena: std.mem.Allocator, parts: []const []const u8) std.mem.Allocator.Error![:0]const u8 {
+    return std.fs.path.joinZ(arena, parts);
 }
 
 fn copyInto(buf: []u8, s: []const u8) PathError![]const u8 {
@@ -324,6 +328,10 @@ test "isValidProfile accepts [A-Za-z0-9_-] and nothing else" {
     @memset(&long, 'a');
     try testing.expect(!isValidProfile(&long));
     try testing.expect(isValidProfile(long[0..max_profile_len]));
+    // The socket name caps the profile at 64, not at the 255 of a file name.
+    try testing.expectEqual(@as(usize, 64), max_profile_len);
+    try testing.expect(isValidProfile(long[0..64]));
+    try testing.expect(!isValidProfile(long[0..65]));
 }
 
 test "init puts token and domain into per-profile directories" {
@@ -370,6 +378,17 @@ test "init puts token and domain into per-profile directories" {
 
     // Profiles do not see each other's files.
     try testing.expect((try cfg.readToken(arena, io)) == null);
+
+    // A trailing separator on the root does not become a `//` in the paths.
+    const trailing = try Config.init(arena, io, .{ .xdg_config_home = xdg ++ "/", .home = home }, null, null);
+    try testing.expectEqualStrings(
+        "/tmp/nanotodon-test-layout/nanotodon/token/default",
+        trailing.token_path,
+    );
+    try testing.expectEqualStrings(
+        "/tmp/nanotodon-test-layout/nanotodon/domain/default",
+        trailing.domain_path,
+    );
 }
 
 test "a plain file where token/ or domain/ belongs reports that entry" {

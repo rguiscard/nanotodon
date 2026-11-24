@@ -66,10 +66,6 @@ pub fn main(init: std.process.Init) !void {
                 "nanotodon: no $HOME or $XDG_CONFIG_HOME for the config directory\n",
                 .{},
             ),
-            error.PathTooLong => std.debug.print(
-                "nanotodon: config path too long (max {d} bytes)\n",
-                .{config.max_path},
-            ),
             // An older version kept `token` and `domain` as plain files; they
             // are directories holding one entry per profile now.
             error.NotDir => if (blocked) |path|
