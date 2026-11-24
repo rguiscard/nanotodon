@@ -16,6 +16,7 @@ const std = @import("std");
 const translated = @import("translated");
 const cli = @import("cli.zig");
 const notify = @import("notify.zig");
+const status_render = @import("status.zig");
 
 /// Raw libcurl declarations, translated from src/curl_c.h in build.zig.
 const c = @import("curl_c");
@@ -237,11 +238,11 @@ const Sink = struct {
                         trace("notification was not understood; dropped", .{});
                     }
                 },
-                .update => translated.nanotodon_stream_dispatch(
-                    @backingInt(out.kind),
-                    out.json.ptr,
-                    out.json.len,
-                ),
+                .update => {
+                    if (!status_render.deliver(self.allocator, out.json)) {
+                        trace("status was not understood; dropped", .{});
+                    }
+                },
             }
             self.framer.eventTaken();
         }
@@ -446,14 +447,40 @@ fn fetchTimeline(allocator: std.mem.Allocator, target: Target) void {
         return std.debug.print("nanotodon: timeline: HTTP {d}\n", .{status});
     }
     if (body.bytes.items.len == 0) return;
+    renderTimeline(allocator, body.bytes.items);
+}
 
-    // `sjson_decode()` scans for a NUL, which the HTTP body does not have.
-    const terminated = allocator.dupeSentinel(u8, body.bytes.items, 0) catch return;
-    defer allocator.free(terminated);
+/// Renders a whole `api/v1/timelines/*` array. Statuses are queued oldest first
+/// (the array is walked backwards) so the newest ends up at the bottom, matching
+/// the C version.
+fn renderTimeline(allocator: std.mem.Allocator, json: []const u8) void {
+    const root = std.json.parseFromSliceLeaky(std.json.Value, allocator, json, .{}) catch {
+        trace("timeline body is not JSON", .{});
+        return;
+    };
+    if (root != .array) {
+        trace("timeline body is not a JSON array", .{});
+        return;
+    }
 
-    // C decodes the array and calls `stream_event_update()` on each element in
-    // reverse order, so the oldest status is queued first.
-    translated.nanotodon_stream_timeline(terminated.ptr, terminated.len);
+    // Each element is re-encoded so `status.render` keeps its byte-based entry
+    // point (the same one the SSE path uses), rather than growing a second
+    // `std.json.Value` code path that would drift from this one.
+    var scratch: std.Io.Writer.Allocating = .init(allocator);
+    defer scratch.deinit();
+
+    var shown: usize = 0;
+    var i = root.array.items.len;
+    while (i > 0) {
+        i -= 1;
+        const item = root.array.items[i];
+        if (item != .object) continue;
+
+        scratch.clearRetainingCapacity();
+        std.json.Stringify.value(item, .{}, &scratch.writer) catch continue;
+        if (status_render.deliver(allocator, scratch.written())) shown += 1;
+    }
+    trace("timeline: {d} item(s), {d} rendered", .{ root.array.items.len, shown });
 }
 
 // ---------------------------------------------------------------------------

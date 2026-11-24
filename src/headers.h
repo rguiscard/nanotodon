@@ -20,17 +20,9 @@ void nanotodon_set_credentials(const char *auth_header, const char *domain);
 // Must run before the threads start.
 void nanotodon_runtime(void);
 
-// The streaming loop itself is Zig now (src/stream.zig); it calls these two when
-// it has a complete event, so the JSON is decoded and drawn by the code below
-// in C.
-
-// One `update` SSE event. `kind` is 0 (notifications are formatted in
-// src/notify.zig instead). `json`/`len` describe a complete JSON object; it is
-// only read during the call.
-void nanotodon_stream_dispatch(int kind, const char *json, size_t len);
-
-// The `api/v1/timelines/*` array, rendered oldest first.
-void nanotodon_stream_timeline(const char *json, size_t len);
+// The streaming loop, the notification formatting and the status rendering are
+// all Zig now (src/stream.zig, src/notify.zig, src/status.zig); nothing here
+// decodes stream JSON any more.
 
 // Hook called by the Zig render loop (src/loop.zig).
 void nanotodon_pump_output(void);
