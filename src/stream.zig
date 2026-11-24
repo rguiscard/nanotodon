@@ -3,8 +3,8 @@
 //! (formerly `get_timeline()`).
 //!
 //! HTTP and the `text/event-stream` framing live here. Decoding the JSON and
-//! drawing it stays in C (`stream_event_update` / `stream_event_notify`): every
-//! complete event is handed over as raw bytes through
+//! drawing toots stays in C (`stream_event_update`): every complete event is
+//! handed over as raw bytes through
 //! `translated.nanotodon_stream_dispatch()`, which is all that remains of the old
 //! loop on the C side.
 //!
@@ -15,6 +15,7 @@
 const std = @import("std");
 const translated = @import("translated");
 const cli = @import("cli.zig");
+const notify = @import("notify.zig");
 
 /// Raw libcurl declarations, translated from src/curl_c.h in build.zig.
 const c = @import("curl_c");
@@ -226,7 +227,22 @@ const Sink = struct {
             const got = self.framer.feed(self.allocator, pending, &out) catch return false;
             pending = &.{};
             if (!got) return true;
-            translated.nanotodon_stream_dispatch(@backingInt(out.kind), out.json.ptr, out.json.len);
+            self.events += 1;
+            traceBytes(@tagName(out.kind), out.json);
+
+            switch (out.kind) {
+                // Notifications are formatted here; the toot display is still C.
+                .notification => {
+                    if (!notify.deliver(self.allocator, out.json)) {
+                        trace("notification was not understood; dropped", .{});
+                    }
+                },
+                .update => translated.nanotodon_stream_dispatch(
+                    @backingInt(out.kind),
+                    out.json.ptr,
+                    out.json.len,
+                ),
+            }
             self.framer.eventTaken();
         }
     }

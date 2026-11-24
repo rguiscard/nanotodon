@@ -12,6 +12,7 @@ const proto = @import("proto.zig");
 const poster = @import("poster.zig");
 const server = @import("server.zig");
 const socketpath = @import("socketpath.zig");
+const notify = @import("notify.zig");
 const stream = @import("stream.zig");
 
 pub fn main(init: std.process.Init) !void {
@@ -249,6 +250,7 @@ test {
     std.testing.refAllDecls(proto);
     std.testing.refAllDecls(server);
     std.testing.refAllDecls(socketpath);
+    std.testing.refAllDecls(notify);
     std.testing.refAllDecls(stream);
 }
 

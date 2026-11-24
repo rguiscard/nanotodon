@@ -26,9 +26,6 @@ static void (*stream_event_handler)(struct sjson_node *);
 // ストリーミングでのToot受信処理,stream_event_handlerへ代入
 static void stream_event_update(struct sjson_node *);
 
-// ストリーミングでの通知受信処理,stream_event_handlerへ代入
-static void stream_event_notify(struct sjson_node *);
-
 // アクセストークン文字列
 static char access_token[256];
 
@@ -43,7 +40,7 @@ static int hidlckflag = 1;
 static int noemojiflag = 0;
 
 // Zig (src/stream.zig) が text/event-stream を組み立て、1イベント分のJSONを
-// ここへ渡す。kind は 0=update, 1=notification。
+// ここへ渡す。kind は 0=update。(notification は src/notify.zig が処理する)
 void nanotodon_stream_dispatch(int kind, const char *json, size_t len)
 {
 	if (!json || len == 0) return;
@@ -58,9 +55,9 @@ void nanotodon_stream_dispatch(int kind, const char *json, size_t len)
 		return;
 	}
 
+	// 1 (notification) は src/notify.zig が直接キューへ入れるので、ここへは来ない。
 	switch (kind) {
 	case 0: stream_event_update(node); break;
-	case 1: stream_event_notify(node); break;
 	default: break;
 	}
 
@@ -89,66 +86,6 @@ void nanotodon_stream_timeline(const char *json, size_t len)
 	}
 
 	sjson_destroy_context(ctx);
-}
-
-
-// ストリーミングでの通知受信処理,stream_event_handlerへ代入
-static void stream_event_notify(sjson_node *jobj_from_string)
-{
-	struct sjson_node *notify_type, *screen_name, *display_name, *status;
-	const char *dname;
-	if(!jobj_from_string) return;
-	read_json_fom_path(jobj_from_string, "type", &notify_type);
-	read_json_fom_path(jobj_from_string, "account/acct", &screen_name);
-	read_json_fom_path(jobj_from_string, "account/display_name", &display_name);
-	int exist_status = read_json_fom_path(jobj_from_string, "status", &status);
-
-	putchar('\a');
-
-	sbctx_t sb;
-	sbctx_t *sbctx = &sb;
-
-	ninitbuf(&sb);
-
-	// 通知種別を表示に流用するので先頭を大文字化
-	char *t = strdup(notify_type->string_);
-	t[0] = toupper((int)(unsigned char)t[0]);
-
-	// 通知種別と誰からか[ screen_name(display_name) ]を表示
-	nattron(sbctx, COLOR_PAIR(4));
-	if(!noemojiflag) naddstr(sbctx, strcmp(t, "Follow") == 0 ? "👥" : strcmp(t, "Favourite") == 0 ? "💕" : strcmp(t, "Reblog") == 0 ? "🔃" : strcmp(t, "Mention") == 0 ? "🗨" : "");
-	naddstr(sbctx, t);
-	free(t);
-	naddstr(sbctx, " from ");
-	naddstr(sbctx, screen_name->string_);
-
-	dname = display_name->string_;
-
-	// dname(display_name)が空の場合は括弧を表示しない
-	if (dname[0] != '\0') {
-		naddstr(sbctx, " (");
-		naddstr(sbctx, dname);
-		naddstr(sbctx, ")");
-	}
-	naddstr(sbctx, "\n");
-	nattroff(sbctx, COLOR_PAIR(4));
-
-	sjson_tag type;
-
-	type = status->tag;
-
-	nflushcache(&sb);
-	squeue_enqueue(sb);
-
-	// 通知対象のTootを表示,Follow通知だとtypeがNULLになる
-	if(type != SJSON_NULL && exist_status) {
-		stream_event_update(status);
-	}
-
-	//wrefresh(scr);
-
-	/*wmove(pad, pad_x, pad_y);
-	wrefresh(pad);*/
 }
 
 // ストリーミングでのToot受信処理,stream_event_handlerへ代入

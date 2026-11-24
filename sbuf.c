@@ -1,5 +1,6 @@
 #include "nanotodon.h"
 #include "sbuf.h"
+#include "squeue.h"
 #include "src/headers.h"
 #include <string.h>
 #include <stdlib.h>
@@ -45,6 +46,20 @@ void nputbuf(sbctx_t *sbctx, const void *d, int l)
 void nanotodon_sbuf_put(void *sbctx, const void *data, int len)
 {
 	nputbuf((sbctx_t *)sbctx, data, len);
+}
+
+// Queue one already-formatted line for the render loop to print. src/notify.zig
+// formats notifications; going through the same queue as every other message is
+// what keeps the streaming thread from writing to stdout at the same time as
+// src/loop.zig.
+void nanotodon_enqueue_text(const char *data, int len)
+{
+	sbctx_t sb;
+
+	ninitbuf(&sb);
+	nputbuf(&sb, data, len);
+	nflushcache(&sb);
+	squeue_enqueue(sb);
 }
 
 /*

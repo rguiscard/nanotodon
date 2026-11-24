@@ -24,8 +24,9 @@ void nanotodon_runtime(void);
 // it has a complete event, so the JSON is decoded and drawn by the code below
 // in C.
 
-// One SSE event. `kind` is 0 for `update` and 1 for `notification`.
-// `json`/`len` describe a complete JSON object; it is only read during the call.
+// One `update` SSE event. `kind` is 0 (notifications are formatted in
+// src/notify.zig instead). `json`/`len` describe a complete JSON object; it is
+// only read during the call.
 void nanotodon_stream_dispatch(int kind, const char *json, size_t len);
 
 // The `api/v1/timelines/*` array, rendered oldest first.
@@ -43,6 +44,10 @@ void nanotodon_pump_output(void);
 // Implemented in C (sbuf.c): lets Zig append to an sbctx without exposing the
 // struct layout.
 void nanotodon_sbuf_put(void *sbctx, const void *data, int len);
+
+// Implemented in C (sbuf.c): puts one formatted line on the queue that the
+// render loop drains. Used by src/notify.zig.
+void nanotodon_enqueue_text(const char *data, int len);
 
 // Implemented in Zig (src/kitty.zig): encodes decoded RGBA pixels as Kitty
 // graphics and appends the escape stream to `sbctx`. Called from image.c.
