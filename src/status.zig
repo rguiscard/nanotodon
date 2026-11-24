@@ -1,10 +1,11 @@
 //! Renders one status (a Mastodon `update` event, or an element of the
 //! `api/v1/timelines/*` array) as plain text.
 //!
-//! This replaces the C `stream_event_update()`. The first version is
-//! deliberately plain: the HTML `content` is printed as-is, including its tags,
-//! because a correct stripper is a separate job and was not asked for yet. The
-//! same goes for colour and emoji.
+//! This replaces the C `stream_event_update()`. The HTML `content` is reduced
+//! to terminal text by `htmltext.zig`: block tags become line breaks, character
+//! references are decoded and the links an anchor pointed at are listed after
+//! the body. Colour and real emoji are still out of scope; a custom emoji
+//! survives as its `:shortcode:`.
 //!
 //! A boost (`reblog`) is **not** expanded: the status is rendered as it stands,
 //! preceded by a `Boosted by {acct}` line, so a boost is recognisable without
@@ -16,6 +17,7 @@
 const std = @import("std");
 const output = @import("out.zig");
 const images = @import("image.zig");
+const htmltext = @import("htmltext.zig");
 
 /// The fields that are read. Everything else in a status is ignored, so a schema
 /// addition cannot break rendering.
@@ -85,9 +87,25 @@ pub fn render(
     try out.appendSlice(allocator, created_at);
     try out.append(allocator, '\n');
 
-    // The body, HTML and all, then a blank line to separate it from the next one.
-    try out.appendSlice(allocator, parsed.content orelse "");
-    try out.appendSlice(allocator, "\n\n");
+    // The body as terminal text, the links it pointed at, then a blank line to
+    // separate it from the next status. A rendering failure must not drop the
+    // status itself, so it degrades to an empty body.
+    var text = htmltext.render(allocator, parsed.content orelse "", .{}) catch htmltext.Text{};
+    defer text.deinit(allocator);
+
+    if (text.body.items.len != 0) {
+        try out.appendSlice(allocator, text.body.items);
+        try out.append(allocator, '\n');
+    }
+    if (text.links.items.len != 0) {
+        try out.appendSlice(allocator, "\nLinks:\n");
+        for (text.links.items) |link| {
+            try out.appendSlice(allocator, "  ");
+            try out.appendSlice(allocator, link.href);
+            try out.append(allocator, '\n');
+        }
+    }
+    try out.append(allocator, '\n');
 
     if (parsed.media_attachments) |media| {
         for (media) |m| {
@@ -154,7 +172,7 @@ test "plain status" {
     defer arena.free(line);
     try testing.expectEqualStrings(
         "alice (Alice) [public] - 2026-11-24T10:00:00.000Z\n" ++
-            "<p>hello</p>\n\n",
+            "hello\n\n",
         line,
     );
 }
@@ -178,21 +196,34 @@ test "a boost is marked but not expanded" {
     );
     defer arena.free(line);
     try testing.expectEqualStrings(
-        "Boosted by dave\ndave (Dave) [public] - t\n\n\n",
+        "Boosted by dave\ndave (Dave) [public] - t\n\n",
         line,
     );
     // The nested author must not appear: it belongs to the boosted status.
     try testing.expect(std.mem.indexOf(u8, line, "carol") == null);
 }
 
-test "HTML is printed verbatim" {
+test "HTML is reduced to text" {
     const arena = testing.allocator;
     const line = try renderAlloc(arena,
         \\{"content":"<p>a &amp; b</p><br/>c","created_at":"t","visibility":"public",
         \\ "account":{"acct":"e"}}
     );
     defer arena.free(line);
-    try testing.expect(std.mem.endsWith(u8, line, "<p>a &amp; b</p><br/>c\n\n"));
+    try testing.expectEqualStrings("e [public] - t\na & b\nc\n\n", line);
+}
+
+test "links are listed after the body" {
+    const arena = testing.allocator;
+    const line = try renderAlloc(arena,
+        \\{"content":"<p>see <a href='https://example.com/a'>this</a></p>",
+        \\ "created_at":"t","visibility":"public","account":{"acct":"g"}}
+    );
+    defer arena.free(line);
+    try testing.expectEqualStrings(
+        "g [public] - t\nsee this\n\nLinks:\n  https://example.com/a\n\n",
+        line,
+    );
 }
 
 test "media attachments are listed with their type" {
@@ -211,7 +242,7 @@ test "missing fields degrade instead of failing" {
     const arena = testing.allocator;
     const line = try renderAlloc(arena, "{}");
     defer arena.free(line);
-    try testing.expectEqualStrings("? [?] - ?\n\n\n", line);
+    try testing.expectEqualStrings("? [?] - ?\n\n", line);
 }
 
 test "a non-object payload is rejected" {

@@ -138,7 +138,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    //    exe.root_module.addImport("translated", t.mod);
     exe.root_module.linkSystemLibrary("curl", .{});
 
     // The `toot` client: pure Zig, it only talks JSONL over the UNIX socket the
