@@ -27,9 +27,9 @@ pub const Error = error{
 
 pub const Env = config.Env;
 
-/// Returns an allocated path. `explicit` wins over everything, `profile`
-/// follows the same naming convention as the token/domain files
-/// (`token<profile>`), except with a dash for readability.
+/// Returns an allocated path. `explicit` wins over everything; `profile` is
+/// always named (callers pass `config.default_profile` when the command line
+/// has none), so the file is `nanotodon-<profile>.sock`.
 ///
 /// `config_root` is the server's already-created config directory; pass null
 /// (as `toot` does) to derive it from the environment instead.
@@ -39,7 +39,7 @@ pub fn resolve(
     allocator: std.mem.Allocator,
     env: Env,
     explicit: ?[]const u8,
-    profile: ?[]const u8,
+    profile: []const u8,
     config_root: ?[]const u8,
 ) ![]const u8 {
     if (explicit) |p| {
@@ -63,11 +63,8 @@ pub fn resolve(
 
 const max_path_len = std.Io.net.UnixAddress.max_len;
 
-fn formatPath(buf: []u8, dir: []const u8, profile: ?[]const u8) error{NoSpaceLeft}![]const u8 {
-    const p = profile orelse "";
-    const dash: []const u8 = if (p.len == 0) "" else "-";
-
-    return std.mem.print(buf, "{s}/nanotodon{s}{s}.sock", .{ dir, dash, p }) catch
+fn formatPath(buf: []u8, dir: []const u8, profile: []const u8) error{NoSpaceLeft}![]const u8 {
+    return std.mem.print(buf, "{s}/nanotodon-{s}.sock", .{ dir, profile }) catch
         error.NoSpaceLeft;
 }
 
@@ -85,30 +82,30 @@ test "explicit path wins" {
 
 test "runtime dir is preferred over home" {
     const env: Env = .{ .runtime_dir = "/run/user/1000", .home = "/home/pi" };
-    const path = try resolve(testing.allocator, env, null, null, null);
+    const path = try resolve(testing.allocator, env, null, config.default_profile, null);
     defer testing.allocator.free(path);
-    try testing.expectEqualStrings("/run/user/1000/nanotodon.sock", path);
+    try testing.expectEqualStrings("/run/user/1000/nanotodon-default.sock", path);
 }
 
 test "falls back to the XDG config dir without a runtime dir" {
     const env: Env = .{ .home = "/home/pi" };
-    const path = try resolve(testing.allocator, env, null, null, null);
+    const path = try resolve(testing.allocator, env, null, config.default_profile, null);
     defer testing.allocator.free(path);
-    try testing.expectEqualStrings("/home/pi/.config/nanotodon/nanotodon.sock", path);
+    try testing.expectEqualStrings("/home/pi/.config/nanotodon/nanotodon-default.sock", path);
 }
 
 test "XDG_CONFIG_HOME wins over HOME" {
     const env: Env = .{ .xdg_config_home = "/cfg", .home = "/home/pi" };
-    const path = try resolve(testing.allocator, env, null, null, null);
+    const path = try resolve(testing.allocator, env, null, config.default_profile, null);
     defer testing.allocator.free(path);
-    try testing.expectEqualStrings("/cfg/nanotodon/nanotodon.sock", path);
+    try testing.expectEqualStrings("/cfg/nanotodon/nanotodon-default.sock", path);
 }
 
 test "an empty runtime dir is treated as unset" {
     const env: Env = .{ .runtime_dir = "", .home = "/home/pi" };
-    const path = try resolve(testing.allocator, env, null, null, null);
+    const path = try resolve(testing.allocator, env, null, config.default_profile, null);
     defer testing.allocator.free(path);
-    try testing.expectEqualStrings("/home/pi/.config/nanotodon/nanotodon.sock", path);
+    try testing.expectEqualStrings("/home/pi/.config/nanotodon/nanotodon-default.sock", path);
 }
 
 test "profile goes into the file name" {
@@ -118,15 +115,8 @@ test "profile goes into the file name" {
     try testing.expectEqualStrings("/run/user/1000/nanotodon-work.sock", path);
 }
 
-test "an empty profile behaves like no profile" {
-    const env: Env = .{ .runtime_dir = "/run/user/1000" };
-    const path = try resolve(testing.allocator, env, null, "", null);
-    defer testing.allocator.free(path);
-    try testing.expectEqualStrings("/run/user/1000/nanotodon.sock", path);
-}
-
 test "no home at all is an error" {
-    try testing.expectError(Error.NoHome, resolve(testing.allocator, .{}, null, null, null));
+    try testing.expectError(Error.NoHome, resolve(testing.allocator, .{}, null, config.default_profile, null));
 }
 
 test "paths longer than sun_path are rejected" {
@@ -135,6 +125,6 @@ test "paths longer than sun_path are rejected" {
     @memset(long, 'a');
     try testing.expectError(
         Error.NameTooLong,
-        resolve(testing.allocator, .{}, long, null, null),
+        resolve(testing.allocator, .{}, long, config.default_profile, null),
     );
 }

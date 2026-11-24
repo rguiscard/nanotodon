@@ -3,10 +3,12 @@
 //! Parsing, validation, clamping and the user facing messages all live here.
 //! Only the flags are handed to the C side (`nanotodon_apply_cli_options()`);
 //! the profile stays in Zig, where it decides the config paths (src/config.zig)
-//! and the socket name (src/socketpath.zig).
+//! — `token/<profile>` and `domain/<profile>`, `default` when unnamed — and the
+//! socket name (src/socketpath.zig).
 
 const std = @import("std");
 const translated = @import("translated");
+const config = @import("config.zig");
 
 /// Values must match `NANOTODON_TIMELINE_*` in src/headers.h.
 pub const Timeline = enum(c_int) {
@@ -15,9 +17,9 @@ pub const Timeline = enum(c_int) {
     public = 2,
 };
 
-/// Longest profile name we accept; it becomes part of the config file names
-/// (`token<profile>`) and the socket file name.
-pub const max_profile_len = 255;
+/// Longest profile name we accept; it becomes a config directory entry and part
+/// of the socket file name. The rule itself lives in `config.isValidProfile`.
+pub const max_profile_len = config.max_profile_len;
 
 /// Hard upper bound the C code used to apply to `-tllimit` (the REST API caps
 /// the `limit` parameter at 40).
@@ -40,7 +42,9 @@ pub const Options = struct {
 pub const ParseError = error{
     TooFewArguments,
     UnknownTimeline,
-    ProfileTooLong,
+    /// The `-profile` value is empty, too long, or has a character outside
+    /// `[A-Za-z0-9_-]`.
+    BadProfile,
 };
 
 pub const Error = ParseError || std.Io.Writer.Error;
@@ -73,9 +77,12 @@ pub fn parse(it: anytype, writer: ?*std.Io.Writer) Error!Options {
             try info(writer, "Hide UI emojis.\n", .{});
         } else if (std.mem.eql(u8, arg, "-profile")) {
             const value = try nextValue(it);
-            if (value.len > max_profile_len) {
-                std.debug.print("Profile name too long (max {d} bytes)\n", .{max_profile_len});
-                return ParseError.ProfileTooLong;
+            if (!config.isValidProfile(value)) {
+                std.debug.print(
+                    "Invalid profile name (1-{d} characters from A-Z a-z 0-9 _ -)\n",
+                    .{max_profile_len},
+                );
+                return ParseError.BadProfile;
             }
             opts.profile = value;
             try info(writer, "Using profile: {s}\n", .{value});
@@ -224,9 +231,19 @@ test "profile without a value is fatal" {
 test "profile longer than the C buffer is rejected" {
     const too_long: [256]u8 = @splat('x');
     try testing.expectError(
-        ParseError.ProfileTooLong,
+        ParseError.BadProfile,
         parseArgv(&.{ "nanotodon", "-profile", &too_long }),
     );
+}
+
+test "profile with a path separator or empty is rejected" {
+    try testing.expectError(ParseError.BadProfile, parseArgv(&.{ "nanotodon", "-profile", "a/b" }));
+    try testing.expectError(ParseError.BadProfile, parseArgv(&.{ "nanotodon", "-profile", ".." }));
+}
+
+test "profile accepts letters, digits, dash and underscore" {
+    const opts = try parseArgv(&.{ "nanotodon", "-profile", "Work-2_x" });
+    try testing.expectEqualStrings("Work-2_x", opts.profile.?);
 }
 
 test "profile at the buffer limit is accepted" {

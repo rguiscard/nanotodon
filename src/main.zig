@@ -40,7 +40,7 @@ pub fn main(init: std.process.Init) !void {
         try stdout_writer.flush();
         switch (err) {
             // These were already reported to stderr by cli.parse().
-            error.TooFewArguments, error.UnknownTimeline, error.ProfileTooLong => {},
+            error.TooFewArguments, error.UnknownTimeline, error.BadProfile => {},
             else => std.debug.print("nanotodon: {s}\n", .{@errorName(err)}),
         }
         std.process.exit(255);
@@ -59,7 +59,8 @@ pub fn main(init: std.process.Init) !void {
     // environment and the profile, and the directories are created here — before
     // the socket is bound, because the socket may live in the config root.
     const env = config.Env.fromMap(init.environ_map);
-    const cfg = config.Config.init(arena, io, env, opts.profile) catch |err| {
+    var blocked: ?[]const u8 = null;
+    const cfg = config.Config.init(arena, io, env, opts.profile, &blocked) catch |err| {
         switch (err) {
             error.NoHome => std.debug.print(
                 "nanotodon: no $HOME or $XDG_CONFIG_HOME for the config directory\n",
@@ -69,6 +70,19 @@ pub fn main(init: std.process.Init) !void {
                 "nanotodon: config path too long (max {d} bytes)\n",
                 .{config.max_path},
             ),
+            // An older version kept `token` and `domain` as plain files; they
+            // are directories holding one entry per profile now.
+            error.NotDir => if (blocked) |path|
+                std.debug.print(
+                    "nanotodon: {s} is a file, but it must now be a directory holding one\n" ++
+                        "  entry per profile. Move it in as {s}/{s}, then start again.\n",
+                    .{ path, path, opts.profile orelse config.default_profile },
+                )
+            else
+                std.debug.print(
+                    "nanotodon: cannot create the config directories: {s}\n",
+                    .{@errorName(err)},
+                ),
             else => std.debug.print(
                 "nanotodon: cannot create the config directories: {s}\n",
                 .{@errorName(err)},
@@ -88,7 +102,7 @@ pub fn main(init: std.process.Init) !void {
         arena,
         env,
         opts.socket,
-        opts.profile,
+        cfg.profile,
         cfg.root_dir,
     ) catch |err| switch (err) {
         error.NameTooLong => {

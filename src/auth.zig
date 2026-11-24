@@ -5,9 +5,9 @@
 //! The files it writes are exactly the ones the C version wrote, so existing
 //! installs and older/newer binaries keep working with each other:
 //!
-//!   <root>/domain<profile>        plain hostname, no trailing newline
+//!   <root>/domain/<profile>       plain hostname, no trailing newline
 //!   <root>/app_token/<domain>     raw body of POST /api/v1/apps
-//!   <root>/token<profile>         raw body of POST /oauth/token
+//!   <root>/token/<profile>        raw body of POST /oauth/token
 //!
 //! Only this dialog reads stdin, and it does so one byte at a time: a buffered
 //! reader could swallow keystrokes that the terminal reader needs afterwards.
@@ -46,7 +46,7 @@ pub const Error = error{
     HttpStatus,
 };
 
-/// Interactive registration. Returns once `<root>/token<profile>` holds an
+/// Interactive registration. Returns once `<root>/token/<profile>` holds an
 /// access token; the caller re-reads it through `config.Config`.
 pub fn register(
     io: Io,

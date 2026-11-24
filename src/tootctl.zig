@@ -17,6 +17,7 @@
 const std = @import("std");
 const net = std.Io.net;
 const proto = @import("proto.zig");
+const config = @import("config.zig");
 const socketpath = @import("socketpath.zig");
 
 /// `toot`'s own bound for the encoded request. Deliberately *not* the protocol
@@ -54,7 +55,10 @@ pub fn main(init: std.process.Init) !void {
             if (std.mem.eql(u8, a, "-socket")) {
                 socket_opt = args.next() orelse dieUsage("-socket needs a value\n");
             } else if (std.mem.eql(u8, a, "-profile")) {
-                profile = args.next() orelse dieUsage("-profile needs a value\n");
+                const value = args.next() orelse dieUsage("-profile needs a value\n");
+                if (!config.isValidProfile(value))
+                    dieUsage("-profile takes 1-255 characters from A-Z a-z 0-9 _ -\n");
+                profile = value;
             } else if (std.mem.eql(u8, a, "-v")) {
                 const name = args.next() orelse dieUsage("-v needs a value\n");
                 visibility = std.meta.stringToEnum(proto.Visibility, name) orelse
@@ -106,7 +110,7 @@ pub fn main(init: std.process.Init) !void {
         arena,
         socketpath.Env.fromMap(init.environ_map),
         socket_opt,
-        profile,
+        profile orelse config.default_profile,
         null, // no Config here: derive the directory from the environment
     ) catch |err| switch (err) {
         error.NameTooLong => dieFatal("socket path too long; pass -socket\n", .{}),
