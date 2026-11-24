@@ -12,7 +12,8 @@
 //! rendering someone else's toot in its place.
 //!
 //! Every status becomes one string, images included, and leaves through a
-//! single `output.write()`, so a status and its pictures print atomically.
+//! single `output.writeSeparated()`, so a status, its pictures and the rule
+//! above it print atomically.
 
 const std = @import("std");
 const output = @import("out.zig");
@@ -139,7 +140,9 @@ pub fn deliver(io: std.Io, allocator: std.mem.Allocator, cache_dir: ?std.Io.Dir,
     const ok = render(io, allocator, cache_dir, json, &line) catch return false;
     if (!ok or line.items.len == 0) return false;
 
-    output.write(io, line.items);
+    // `writeSeparated`, not `write`: the rule above everything but the first
+    // status is drawn in `out.zig`, so `render` keeps producing plain text.
+    output.writeSeparated(io, line.items);
     return true;
 }
 

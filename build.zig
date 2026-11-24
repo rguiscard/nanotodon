@@ -41,6 +41,11 @@ pub fn build(b: *std.Build) void {
     });
     curl_c.linkSystemLibrary("curl", .{});
 
+    const zigzag = b.dependency("zigzag", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Kitty graphics support for image attachments (src/image.zig, plus
     // stb_image decoding in image.c). Off by default so a plain `zig build`
     // behaves exactly as before; enable with `zig build -Dimage=true`. The
@@ -132,6 +137,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "translated", .module = t.mod },
                 .{ .name = "curl", .module = dep_curl.module("curl") },
                 .{ .name = "curl_c", .module = curl_c.createModule() },
+                .{ .name = "zigzag", .module = zigzag.module("zigzag") },
                 .{ .name = "build_options", .module = options.createModule() },
             },
             .link_libc = true,
