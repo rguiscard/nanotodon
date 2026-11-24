@@ -455,10 +455,16 @@ fn fetchTimeline(io: std.Io, allocator: std.mem.Allocator, target: Target) void 
 /// (the array is walked backwards) so the newest ends up at the bottom, matching
 /// the C version.
 fn renderTimeline(io: std.Io, allocator: std.mem.Allocator, target: Target, json: []const u8) void {
-    const root = std.json.parseFromSliceLeaky(std.json.Value, allocator, json, .{}) catch {
+    // Non-leaky: the whole timeline body — every object, array and string in it
+    // — is materialised here, and `allocator` is `smp_allocator`, which never
+    // frees. Leaking one copy per startup fetch is the largest single leak in
+    // the program, so this frees it once the loop below has walked it.
+    var root_state = std.json.parseFromSlice(std.json.Value, allocator, json, .{}) catch {
         trace("timeline body is not JSON", .{});
         return;
     };
+    defer root_state.deinit();
+    const root = root_state.value;
     if (root != .array) {
         trace("timeline body is not a JSON array", .{});
         return;

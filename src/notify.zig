@@ -32,9 +32,13 @@ const Wire = struct {
 /// Returns `false` when the payload is not a JSON object this code understands;
 /// the caller then leaves the event alone (it has already been traced).
 pub fn format(allocator: std.mem.Allocator, json: []const u8, out: *std.ArrayList(u8)) !bool {
-    const parsed = std.json.parseFromSliceLeaky(Wire, allocator, json, .{
+    // Non-leaky parse: the fields are copied into `allocator`, which is
+    // `smp_allocator` in the stream thread and never frees on its own.
+    var parsed_state = std.json.parseFromSlice(Wire, allocator, json, .{
         .ignore_unknown_fields = true,
     }) catch return false;
+    defer parsed_state.deinit();
+    const parsed = parsed_state.value;
 
     // Degenerate payloads still produce a line: a notification that was sent is
     // worth seeing even if one of its fields is missing.

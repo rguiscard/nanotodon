@@ -50,10 +50,15 @@ pub fn render(
     json: []const u8,
     out: *std.ArrayList(u8),
 ) !bool {
-    const parsed = std.json.parseFromSliceLeaky(Wire, allocator, json, .{
+    // `parseFromSlice` (not the leaky variant): every string field is copied
+    // into `allocator`, and the stream thread runs on `smp_allocator`, which
+    // never frees. Without the `deinit()` each status would cost its own JSON
+    // permanently. `out` already holds copies, so it stays valid afterwards.
+    var parsed_state = std.json.parseFromSlice(Wire, allocator, json, .{
         .ignore_unknown_fields = true,
     }) catch return false;
-
+    defer parsed_state.deinit();
+    const parsed = parsed_state.value;
     // A boost is marked, not expanded: the nested status is left alone.
     if (parsed.reblog) |_| {
         const by = if (parsed.account) |a| (a.acct orelse "?") else "?";
