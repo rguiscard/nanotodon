@@ -7,9 +7,6 @@
 #include <ctype.h>  // isspace
 #include <locale.h> // setlocale
 
-#define SJSON_IMPLEMENT
-#include "sjson.h"
-
 #include "nanotodon.h"
 #include "sbuf.h"
 #include "utils.h"

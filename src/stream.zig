@@ -98,9 +98,7 @@ pub const SseFramer = struct {
 
     pub const Out = struct {
         kind: EventKind,
-        /// The JSON payload, NUL-terminated one byte past `len` so C parsers that
-        /// scan for the terminator can take `json.ptr` directly.
-        /// Valid until the next `feed` call on the same framer.
+        /// The JSON payload, valid until the next `feed` call on the same framer.
         json: []const u8,
     };
 
@@ -150,11 +148,7 @@ pub const SseFramer = struct {
                 continue;
             };
             if (self.data.items.len == 0) continue;
-            // `sjson_decode()` on the C side scans for a terminating NUL, and the
-            // payload here is an unterminated slice, so terminate it. The NUL is
-            // not part of `out.json.len`, so callers still see just the JSON.
-            try self.data.append(allocator, 0);
-            out.* = .{ .kind = kind, .json = self.data.items[0 .. self.data.items.len - 1] };
+            out.* = .{ .kind = kind, .json = self.data.items };
             return true;
         }
         return false;
@@ -592,18 +586,6 @@ test "sse: a payload with embedded newlines keeps them" {
 
     try drainAll(&framer, testing.allocator, "event: update\ndata: {\"a\":\ndata: 1}\n\n", &seen);
     try testing.expectEqualStrings("update:{\"a\":\n1}|", seen.items);
-}
-
-test "sse: the payload is NUL-terminated one byte past json.len" {
-    var framer: SseFramer = .{};
-    defer framer.deinit(testing.allocator);
-
-    var out: SseFramer.Out = undefined;
-    try testing.expect(try framer.feed(testing.allocator, "event: update\ndata: {\"a\":1}\n\n", &out));
-    // C parses `out.json.ptr` as a C string, so the byte after the slice must
-    // be a NUL even though `len` does not count it.
-    try testing.expectEqual(@as(u8, 0), out.json.ptr[out.json.len]);
-    try testing.expectEqualStrings("{\"a\":1}", out.json);
 }
 
 test "apiUrl builds the endpoint under the domain" {
