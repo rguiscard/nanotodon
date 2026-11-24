@@ -56,5 +56,3 @@ line
 message
 EOF
 ```
-## Thanks
-- septag : sjson.h (https://github.com/septag/sjson)
