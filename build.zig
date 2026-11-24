@@ -72,32 +72,24 @@ pub fn build(b: *std.Build) void {
         // which requires us to specify a target.
         .target = target,
     });
-    const c_sources_base = [_][]const u8{
-        "nanotodon.c",
-        "sbuf.c",
-        "utils.c",
-    };
-    const c_sources_image = [_][]const u8{
-        "nanotodon.c",
-        "sbuf.c",
-        "utils.c",
-        "image.c",
-    };
-    const c_flags_base = [_][]const u8{
-        "-D_GNU_SOURCE",
-    };
-    const c_flags_image = [_][]const u8{
+    // The only C left in the program is stb_image decoding, for image
+    // attachments. Everything else — startup, streaming, rendering, the Kitty
+    // escape stream — is Zig.
+    const c_flags = [_][]const u8{
         "-D_GNU_SOURCE",
         "-DUSE_KITTY",
     };
 
-    const c_sources: []const []const u8 = if (image) &c_sources_image else &c_sources_base;
-    const c_flags: []const []const u8 = if (image) &c_flags_image else &c_flags_base;
-
-    mod.addCSourceFiles(.{
-        .files = c_sources,
-        .flags = c_flags,
-    });
+    if (image) {
+        mod.addCSourceFiles(.{
+            .files = &.{"image.c"},
+            .flags = &c_flags,
+        });
+        // stb_image pulls in stdlib.h/string.h. The module carries the C source,
+        // so it also needs libc; without this, the test build of `mod` (which is
+        // a separate compilation from the executable) cannot find the headers.
+        mod.link_libc = true;
+    }
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function

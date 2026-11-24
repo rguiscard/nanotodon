@@ -1,16 +1,12 @@
 // Declarations shared between the C implementation and the Zig front end.
 // This file is the only translate-c input (see build.zig), so it has to stay
 // self-contained: plain C declarations, no #include of project headers.
+//
+// The only C left is stb_image decoding (image.c), used when built with
+// -Dimage. Startup, the streaming loop, notifications, status rendering and the
+// Kitty escape stream are all Zig (src/*.zig).
 
 #include <stddef.h> // size_t
-
-// Startup, called from src/main.zig: the locale and the small amount of state
-// C still keeps. Must run before the threads start.
-void nanotodon_runtime(void);
-
-// The streaming loop, the notification formatting, the status rendering and the
-// image attachments are all Zig now (src/stream.zig, src/notify.zig,
-// src/status.zig, src/image.zig); nothing here decodes stream JSON any more.
 
 #define NANOTODON_TIMELINE_HOME   0
 #define NANOTODON_TIMELINE_LOCAL  1

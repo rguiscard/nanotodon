@@ -1,8 +1,8 @@
 //! Process output.
 //!
-//! Replaces the C output path (`sbuf.c`'s buffer and queue, `squeue.c`, and the
-//! 100 ms `nanotodon_pump_output()` poll): one mutex around a straight write to
-//! stdout.
+//! Replaces the old C output path (`sbuf.c`'s buffer and queue, `squeue.c`, and
+//! the 100 ms `nanotodon_pump_output()` poll; those files are gone now): one
+//! mutex around a straight write to stdout.
 //!
 //! Why no queue: every producer already assembles a whole status, notification
 //! or image escape sequence in one buffer, so atomicity is solved where the

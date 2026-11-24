@@ -1,7 +1,6 @@
 const std = @import("std");
 const Io = std.Io;
 
-const translated = @import("translated");
 const build_options = @import("build_options");
 const curl = @import("curl");
 const auth = @import("auth.zig");
@@ -143,12 +142,10 @@ pub fn main(init: std.process.Init) !void {
         };
     };
 
-    // Startup phase 3: locale, then the little state C still keeps. The locale
-    // call moved here from C; nothing formats dates any more, but libc's numeric
-    // formatting still depends on it, so the process-wide call stays.
+    // Startup phase 3: locale. Nothing formats dates any more, but libc's
+    // numeric formatting still depends on the locale, so the process-wide call
+    // stays. It must happen before the threads start.
     _ = std.c.setlocale(std.c.LC.ALL, "");
-
-    translated.nanotodon_runtime();
 
     // The image cache is opened once, here, so the render path never has to
     // care whether the directory is usable. Without -Dimage there is nothing to
