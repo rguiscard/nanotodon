@@ -14,7 +14,9 @@
 //! leaves on the same queue as every other message and prints atomically.
 
 const std = @import("std");
+const output = @import("out.zig");
 const translated = @import("translated");
+const build_options = @import("build_options");
 
 /// The fields that are read. Everything else in a status is ignored, so a schema
 /// addition cannot break rendering.
@@ -77,8 +79,19 @@ pub fn render(allocator: std.mem.Allocator, json: []const u8, out: *std.ArrayLis
     if (parsed.media_attachments) |media| {
         for (media) |m| {
             const url = m.url orelse continue;
+            const kind = m.type orelse "media";
+
+            // With -Dimage, the picture itself goes out first (its own atomic
+            // write), then the URL line below still says what it was.
+            if (build_options.image_support and std.mem.eql(u8, kind, "image")) {
+                if (allocator.dupeSentinel(u8, url, 0)) |url_z| {
+                    defer allocator.free(url_z);
+                    translated.nanotodon_print_image_zig(url_z.ptr);
+                } else |_| {}
+            }
+
             try out.append(allocator, '[');
-            try out.appendSlice(allocator, m.type orelse "media");
+            try out.appendSlice(allocator, kind);
             try out.appendSlice(allocator, "] ");
             try out.appendSlice(allocator, url);
             try out.append(allocator, '\n');
@@ -90,14 +103,14 @@ pub fn render(allocator: std.mem.Allocator, json: []const u8, out: *std.ArrayLis
 
 /// Renders and queues one status. Returns false if the payload was not
 /// understood.
-pub fn deliver(allocator: std.mem.Allocator, json: []const u8) bool {
+pub fn deliver(io: std.Io, allocator: std.mem.Allocator, json: []const u8) bool {
     var line: std.ArrayList(u8) = .empty;
     defer line.deinit(allocator);
 
     const ok = render(allocator, json, &line) catch return false;
     if (!ok or line.items.len == 0) return false;
 
-    translated.nanotodon_enqueue_text(line.items.ptr, @intCast(line.items.len));
+    output.write(io, line.items);
     return true;
 }
 

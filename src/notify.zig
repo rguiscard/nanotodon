@@ -13,7 +13,7 @@
 //! the same queue as every other message.
 
 const std = @import("std");
-const translated = @import("translated");
+const output = @import("out.zig");
 
 /// The fields that are read. Everything else in a Mastodon notification is
 /// ignored, which also means a schema addition cannot break formatting.
@@ -57,14 +57,14 @@ pub fn format(allocator: std.mem.Allocator, json: []const u8, out: *std.ArrayLis
 
 /// Formats and queues one notification. Returns false if the payload was not
 /// understood.
-pub fn deliver(allocator: std.mem.Allocator, json: []const u8) bool {
+pub fn deliver(io: std.Io, allocator: std.mem.Allocator, json: []const u8) bool {
     var line: std.ArrayList(u8) = .empty;
     defer line.deinit(allocator);
 
     const ok = format(allocator, json, &line) catch return false;
     if (!ok or line.items.len == 0) return false;
 
-    translated.nanotodon_enqueue_text(line.items.ptr, @intCast(line.items.len));
+    output.write(io, line.items);
     return true;
 }
 

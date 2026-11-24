@@ -202,6 +202,7 @@ fn kindOf(name: []const u8) ?EventKind {
 const Sink = struct {
     framer: SseFramer,
     allocator: std.mem.Allocator,
+    io: std.Io,
     /// Set when framing failed; makes libcurl abort with a write error.
     failed: bool = false,
     chunks: usize = 0,
@@ -234,12 +235,12 @@ const Sink = struct {
             switch (out.kind) {
                 // Notifications are formatted here; the toot display is still C.
                 .notification => {
-                    if (!notify.deliver(self.allocator, out.json)) {
+                    if (!notify.deliver(self.io, self.allocator, out.json)) {
                         trace("notification was not understood; dropped", .{});
                     }
                 },
                 .update => {
-                    if (!status_render.deliver(self.allocator, out.json)) {
+                    if (!status_render.deliver(self.io, self.allocator, out.json)) {
                         trace("status was not understood; dropped", .{});
                     }
                 },
@@ -349,12 +350,12 @@ fn traceBytes(what: []const u8, bytes: []const u8) void {
 
 /// Fetches the first page of the timeline, then streams forever. Returns after
 /// logging the first failure; it never exits the process.
-pub fn run(allocator: std.mem.Allocator, target: Target) void {
-    fetchTimeline(allocator, target);
-    streamForever(allocator, target);
+pub fn run(io: std.Io, allocator: std.mem.Allocator, target: Target) void {
+    fetchTimeline(io, allocator, target);
+    streamForever(io, allocator, target);
 }
 
-fn streamForever(allocator: std.mem.Allocator, target: Target) void {
+fn streamForever(io: std.Io, allocator: std.mem.Allocator, target: Target) void {
     var path_buf: [256]u8 = undefined;
     var url_buf: [512]u8 = undefined;
     const path = streamingPath(&path_buf, target.stream) catch
@@ -369,7 +370,7 @@ fn streamForever(allocator: std.mem.Allocator, target: Target) void {
     const headers = HeaderList.init(target.auth_header.ptr);
     defer headers.deinit();
 
-    var sink: Sink = .{ .framer = .{}, .allocator = allocator };
+    var sink: Sink = .{ .framer = .{}, .allocator = allocator, .io = io };
     defer sink.framer.deinit(allocator);
 
     var errbuf: [c.CURL_ERROR_SIZE]u8 = @splat(0);
@@ -402,7 +403,7 @@ fn streamForever(allocator: std.mem.Allocator, target: Target) void {
     if (ret != c.CURLE_OK) report("stream", ret, &errbuf);
 }
 
-fn fetchTimeline(allocator: std.mem.Allocator, target: Target) void {
+fn fetchTimeline(io: std.Io, allocator: std.mem.Allocator, target: Target) void {
     var path_buf: [256]u8 = undefined;
     var url_buf: [512]u8 = undefined;
     const path = timelinePath(&path_buf, target.timeline, target.limit) catch
@@ -447,13 +448,13 @@ fn fetchTimeline(allocator: std.mem.Allocator, target: Target) void {
         return std.debug.print("nanotodon: timeline: HTTP {d}\n", .{status});
     }
     if (body.bytes.items.len == 0) return;
-    renderTimeline(allocator, body.bytes.items);
+    renderTimeline(io, allocator, body.bytes.items);
 }
 
 /// Renders a whole `api/v1/timelines/*` array. Statuses are queued oldest first
 /// (the array is walked backwards) so the newest ends up at the bottom, matching
 /// the C version.
-fn renderTimeline(allocator: std.mem.Allocator, json: []const u8) void {
+fn renderTimeline(io: std.Io, allocator: std.mem.Allocator, json: []const u8) void {
     const root = std.json.parseFromSliceLeaky(std.json.Value, allocator, json, .{}) catch {
         trace("timeline body is not JSON", .{});
         return;
@@ -478,7 +479,7 @@ fn renderTimeline(allocator: std.mem.Allocator, json: []const u8) void {
 
         scratch.clearRetainingCapacity();
         std.json.Stringify.value(item, .{}, &scratch.writer) catch continue;
-        if (status_render.deliver(allocator, scratch.written())) shown += 1;
+        if (status_render.deliver(io, allocator, scratch.written())) shown += 1;
     }
     trace("timeline: {d} item(s), {d} rendered", .{ root.array.items.len, shown });
 }

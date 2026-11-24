@@ -12,7 +12,6 @@
 
 #include "nanotodon.h"
 #include "sbuf.h"
-#include "squeue.h"
 #include "utils.h"
 #ifdef USE_KITTY
 #include "image.h"
@@ -41,27 +40,11 @@ const char *nanotodon_cache_dir(void)
 	return cache_dir_path;
 }
 
-// 端末とキューの初期化。スレッドを起動する前に済ませる。
-// setlocale() は Zig (src/main.zig) が呼ぶ。
+// 初期化。スレッドを起動する前に済ませる。
+// setlocale() と出力は Zig (src/main.zig, src/out.zig) が持つ。
 void nanotodon_runtime(void)
 {
-	squeue_init();
 #ifdef USE_KITTY
 	image_init();
 #endif
-}
-
-// ---- src/loop.zig から呼ばれるフック ----
-
-// queueに溜まった出力を1つ表示する(なければ何もしない)
-void nanotodon_pump_output(void)
-{
-	sbctx_t sb;
-
-	// squeue_dequeue() は成功時に0、空の時に1を返す。以前は空のときにも
-	// 未初期化の sb.buf を free して書き出していた。
-	if(squeue_dequeue(&sb) == 0 && sb.buf != NULL) {
-		fwrite(sb.buf, sb.bufptr, 1, stdout);
-		free(sb.buf);
-	}
 }

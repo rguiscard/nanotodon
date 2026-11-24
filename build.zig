@@ -47,6 +47,11 @@ pub fn build(b: *std.Build) void {
     // made where the renderer calls into image.c (src/nanotodon.c).
     const image = b.option(bool, "image", "Render image attachments (Kitty graphics)") orelse false;
 
+    // Lets Zig see the same switch, so src/status.zig only calls into image.c
+    // when that file is actually compiled in.
+    const options = b.addOptions();
+    options.addOption(bool, "image_support", image);
+
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
     // Zig modules are the preferred way of making Zig code available to consumers.
@@ -69,13 +74,11 @@ pub fn build(b: *std.Build) void {
     const c_sources_base = [_][]const u8{
         "nanotodon.c",
         "sbuf.c",
-        "squeue.c",
         "utils.c",
     };
     const c_sources_image = [_][]const u8{
         "nanotodon.c",
         "sbuf.c",
-        "squeue.c",
         "utils.c",
         "image.c",
     };
@@ -136,6 +139,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "translated", .module = t.mod },
                 .{ .name = "curl", .module = dep_curl.module("curl") },
                 .{ .name = "curl_c", .module = curl_c.createModule() },
+                .{ .name = "build_options", .module = options.createModule() },
             },
             .link_libc = true,
         }),

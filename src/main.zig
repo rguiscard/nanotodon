@@ -7,12 +7,12 @@ const auth = @import("auth.zig");
 const config = @import("config.zig");
 const cli = @import("cli.zig");
 const kitty = @import("kitty.zig");
-const loop = @import("loop.zig");
 const proto = @import("proto.zig");
 const poster = @import("poster.zig");
 const server = @import("server.zig");
 const socketpath = @import("socketpath.zig");
 const notify = @import("notify.zig");
+const output = @import("out.zig");
 const status_render = @import("status.zig");
 const stream = @import("stream.zig");
 
@@ -32,9 +32,11 @@ pub fn main(init: std.process.Init) !void {
     // Stdout is for the actual output of your application, for example if you
     // are implementing gzip, then only the compressed bytes should be sent to
     // stdout, not any debugging messages.
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
-    const stdout_writer = &stdout_file_writer.interface;
+    process_io = io;
+
+    // One writer for the whole process (src/out.zig): it serialises against the
+    // background threads and needs no flush at exit.
+    const stdout_writer = output.Writer.shared(io);
 
     // Option handling lives on the Zig side now. The old C main() used to
     // `return -1` on bad arguments, which the shell reports as 255, so keep
@@ -171,33 +173,36 @@ pub fn main(init: std.process.Init) !void {
     // `async_limit` is 0 (single CPU, or `getCpuCount()` failing), would run
     // inline and never return to this function.
     const stream_target = stream.targetOf(opts, creds.domain, creds.header);
-    const stream_thread = std.Thread.spawn(.{}, streamEntry, .{stream_target}) catch |err| {
+    const stream_thread = std.Thread.spawn(.{}, streamEntry, .{ io, stream_target }) catch |err| {
         std.debug.print("nanotodon: cannot start the streaming thread: {s}\n", .{@errorName(err)});
         std.process.exit(1);
     };
     stream_thread.detach();
 
-    // Same reasoning for the accept loop. It may start serving before
-    // `loop.run` gets going; replies only depend on curl and the access token.
+    // Same reasoning for the accept loop. It may start serving immediately;
+    // replies only depend on curl and the credentials.
     const accept_thread = std.Thread.spawn(.{}, server.Server.acceptLoop, .{&srv}) catch |err| {
         std.debug.print("nanotodon: cannot start the accept thread: {s}\n", .{@errorName(err)});
         std.process.exit(1);
     };
     accept_thread.detach();
 
-    // From here on all stdout writes go through libc stdio via the shims in
-    // src/loop.zig; stdout_writer must not be used again.
-    try loop.run(io);
+    // Nothing left for `main` to do: the stream thread and the accept thread
+    // own the work, and output goes straight out through src/out.zig. Park here
+    // so the process does not exit; the futex is never woken and a spurious
+    // wakeup must not return, hence the loop.
+    var parked: u32 = 0;
+    while (true) io.futexWaitUncancelable(u32, &parked, 0);
 }
 
 /// Plain Zig entry point for `std.Thread.spawn`. The loop logs and returns on
 /// failure; it never exits the process.
-fn streamEntry(target: stream.Target) void {
+fn streamEntry(io: std.Io, target: stream.Target) void {
     // The thread owns no arena of its own: the pages it allocates stay for the
     // lifetime of the process (the loop itself never ends), and it runs
     // concurrently with the UI, so it must not touch a scratch arena that
     // another thread frees.
-    stream.run(std.heap.smp_allocator, target);
+    stream.run(io, std.heap.smp_allocator, target);
 }
 
 /// Reads the token and domain from the config and hands them to C, which keeps
@@ -238,7 +243,16 @@ export fn nanotodon_kitty_emit(
     kitty.emit(sbctx, rgba, w, h);
 }
 
-// `cli`, `loop`, `proto`, `server`, `socketpath` and `stream` are only referenced from
+/// C entry point for src/sbuf.c (declared in src/headers.h). `std.Io` cannot be
+/// passed through C, so this uses the same instance `main` was given.
+var process_io: std.Io = undefined;
+
+export fn nanotodon_out_write_zig(data: ?*const anyopaque, len: usize) callconv(.c) void {
+    const bytes: [*]const u8 = @ptrCast(data orelse return);
+    output.write(process_io, bytes[0..len]);
+}
+
+// `cli`, `proto`, `server`, `socketpath` and `stream` are only referenced from
 // main(), which is not analyzed in a test build, so without touching them here
 // the tests inside those files would never be collected.
 test {
@@ -247,7 +261,7 @@ test {
     std.testing.refAllDecls(cli);
     std.testing.refAllDecls(config);
     std.testing.refAllDecls(kitty);
-    std.testing.refAllDecls(loop);
+    std.testing.refAllDecls(output);
     std.testing.refAllDecls(poster);
     std.testing.refAllDecls(proto);
     std.testing.refAllDecls(server);

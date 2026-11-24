@@ -1,6 +1,5 @@
 #include "nanotodon.h"
 #include "sbuf.h"
-#include "squeue.h"
 #include "src/headers.h"
 #include <string.h>
 #include <stdlib.h>
@@ -48,18 +47,12 @@ void nanotodon_sbuf_put(void *sbctx, const void *data, int len)
 	nputbuf((sbctx_t *)sbctx, data, len);
 }
 
-// Queue one already-formatted line for the render loop to print. src/notify.zig
-// formats notifications; going through the same queue as every other message is
-// what keeps the streaming thread from writing to stdout at the same time as
-// src/loop.zig.
-void nanotodon_enqueue_text(const char *data, int len)
+// Hand finished bytes to the Zig output path (src/out.zig), which serialises
+// them against every other writer. image.c builds its escape sequence in an
+// sbctx_t and calls this once, so an image reaches the terminal as one unit.
+void nanotodon_out_write(const void *data, int len)
 {
-	sbctx_t sb;
-
-	ninitbuf(&sb);
-	nputbuf(&sb, data, len);
-	nflushcache(&sb);
-	squeue_enqueue(sb);
+	nanotodon_out_write_zig(data, (size_t)len);
 }
 
 /*

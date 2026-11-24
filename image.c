@@ -66,6 +66,8 @@ void print_image(sbctx_t *sbctx, char *uri)
 	char hash[24] = {0};
 	char cpath[64];
 
+	if(getenv("NANOTODON_IMAGE_DEBUG")) fprintf(stderr, "image: uri=%s cache=%s\n", uri, nanotodon_cache_dir());
+
 	generate_hash(uri, hash);
 	snprintf(cpath, sizeof cpath, "/%s.kit", hash);
 
@@ -73,6 +75,7 @@ void print_image(sbctx_t *sbctx, char *uri)
 	strcpy(cpath_ptr, cpath);
 
 	FILE *cfp = fopen(cpath_buffer, "rb");
+	if(getenv("NANOTODON_IMAGE_DEBUG")) fprintf(stderr, "image: cache file %s -> %s\n", cpath_buffer, cfp ? "hit" : "miss");
 	if(cfp) {
 		int len = 0;
 		if(fread(&len, sizeof len, 1, cfp) == 1 && len > 0) {
@@ -103,17 +106,20 @@ void print_image(sbctx_t *sbctx, char *uri)
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
 	const CURLcode ret = curl_easy_perform(curl);
 	curl_easy_cleanup(curl);
+	if(getenv("NANOTODON_IMAGE_DEBUG")) fprintf(stderr, "image: curl=%d bytes=%d\n", (int)ret, buf->data_size);
 
 	if(ret == CURLE_OK && buf->data && buf->data_size > 0) {
 		int iw = 0, ih = 0, ic = 0;
 		stbi_uc *pix = stbi_load_from_memory(
 			(const stbi_uc *)buf->data, buf->data_size, &iw, &ih, &ic, 4);
 
+		if(getenv("NANOTODON_IMAGE_DEBUG")) fprintf(stderr, "image: decoded w=%d h=%d ok=%d\n", iw, ih, pix != NULL);
 		if(pix && iw > 0 && ih > 0) {
 			sbctx_t sb2;
 			ninitbuf(&sb2);
 			nanotodon_kitty_emit(&sb2, pix, iw, ih);
 			nflushcache(&sb2);
+			if(getenv("NANOTODON_IMAGE_DEBUG")) fprintf(stderr, "image: escape bytes=%d\n", sb2.bufptr);
 
 			nputbuf(sbctx, sb2.buf, sb2.bufptr);
 
@@ -133,4 +139,19 @@ void print_image(sbctx_t *sbctx, char *uri)
 
 	free(buf->data);
 	free(buf);
+}
+
+// One-shot entry point for Zig (src/status.zig): render the attachment and
+// hand the finished bytes to the shared output path, so an image and its
+// surrounding text never interleave.
+void nanotodon_print_image_zig(const char *uri)
+{
+	sbctx_t sb;
+
+	ninitbuf(&sb);
+	print_image(&sb, (char *)uri);
+	nflushcache(&sb);
+
+	if(sb.buf && sb.bufptr > 0) nanotodon_out_write(sb.buf, sb.bufptr);
+	free(sb.buf);
 }
