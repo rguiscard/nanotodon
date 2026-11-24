@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const config = @import("config.zig");
+const output = @import("out.zig");
 
 /// Values must match `NANOTODON_TIMELINE_*` in src/headers.h.
 pub const Timeline = enum(c_int) {
@@ -57,23 +58,24 @@ pub const Error = ParseError || std.Io.Writer.Error;
 /// outside a real process.
 ///
 /// The program name is dropped with `skip()`, so the loop only ever sees
-/// actual options. Informational messages go to `writer` (pass null to discard
-/// them), while errors go to stderr, matching the old printf/fprintf split.
+/// actual options. Informational messages go to stdout through src/out.zig when
+/// `io` is given (pass null to discard them), while errors go to stderr,
+/// matching the old printf/fprintf split.
 /// Unknown options are *not* fatal, same as the C implementation.
-pub fn parse(it: anytype, writer: ?*std.Io.Writer) Error!Options {
+pub fn parse(it: anytype, io: ?std.Io) Error!Options {
     var opts: Options = .{};
 
     _ = it.skip(); // program name
     while (it.next()) |arg| {
         if (std.mem.eql(u8, arg, "-mono")) {
             opts.mono = true;
-            try info(writer, "Monochrome mode.\n", .{});
+            info(io, "Monochrome mode.\n", .{});
         } else if (std.mem.eql(u8, arg, "-unlock")) {
             opts.unlock = true;
-            try info(writer, "Show DIRECT and PRIVATE.\n", .{});
+            info(io, "Show DIRECT and PRIVATE.\n", .{});
         } else if (std.mem.eql(u8, arg, "-noemoji")) {
             opts.no_emoji = true;
-            try info(writer, "Hide UI emojis.\n", .{});
+            info(io, "Hide UI emojis.\n", .{});
         } else if (std.mem.eql(u8, arg, "-profile")) {
             const value = try nextValue(it);
             if (!config.isValidProfile(value)) {
@@ -84,7 +86,7 @@ pub fn parse(it: anytype, writer: ?*std.Io.Writer) Error!Options {
                 return ParseError.BadProfile;
             }
             opts.profile = value;
-            try info(writer, "Using profile: {s}\n", .{value});
+            info(io, "Using profile: {s}\n", .{value});
         } else if (std.mem.eql(u8, arg, "-socket")) {
             opts.socket = try nextValue(it);
         } else if (std.mem.eql(u8, arg, "-tllimit")) {
@@ -93,7 +95,7 @@ pub fn parse(it: anytype, writer: ?*std.Io.Writer) Error!Options {
             var limit = std.fmt.parseInt(c_int, value, 10) catch 0;
             limit = std.math.clamp(limit, 0, max_limit_timeline);
             opts.limit_timeline = limit;
-            try info(writer, "Timeline limit: {d}\n", .{limit});
+            info(io, "Timeline limit: {d}\n", .{limit});
         } else if (std.mem.eql(u8, arg, "-timeline")) {
             const value = try nextValue(it);
             if (std.mem.eql(u8, value, "home")) {
@@ -108,7 +110,7 @@ pub fn parse(it: anytype, writer: ?*std.Io.Writer) Error!Options {
             }
             // Historical quirk kept on purpose: "-timeline home" reports the
             // streaming endpoint ("user"), not the option value.
-            try info(writer, "Using timeline: {s}\n", .{streamName(opts.timeline)});
+            info(io, "Using timeline: {s}\n", .{streamName(opts.timeline)});
         } else {
             std.debug.print("Unknown Option {s}\n", .{arg});
         }
@@ -143,8 +145,11 @@ fn nextValue(it: anytype) ParseError![]const u8 {
     return ParseError.TooFewArguments;
 }
 
-fn info(writer: ?*std.Io.Writer, comptime fmt: []const u8, args: anytype) std.Io.Writer.Error!void {
-    if (writer) |w| try w.print(fmt, args);
+fn info(io: ?std.Io, comptime fmt: []const u8, args: anytype) void {
+    const actual = io orelse return;
+    var buf: [128]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    output.write(actual, text);
 }
 
 // ---------------------------------------------------------------------------

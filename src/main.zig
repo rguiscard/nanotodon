@@ -34,15 +34,10 @@ pub fn main(init: std.process.Init) !void {
     // stdout, not any debugging messages.
     process_io = io;
 
-    // One writer for the whole process (src/out.zig): it serialises against the
-    // background threads and needs no flush at exit.
-    const stdout_writer = output.Writer.shared(io);
-
     // Option handling lives on the Zig side now. The old C main() used to
     // `return -1` on bad arguments, which the shell reports as 255, so keep
     // that exit status.
-    const opts = cli.parse(&arg_it, stdout_writer) catch |err| {
-        try stdout_writer.flush();
+    const opts = cli.parse(&arg_it, io) catch |err| {
         switch (err) {
             // These were already reported to stderr by cli.parse().
             error.TooFewArguments, error.UnknownTimeline, error.BadProfile => {},
@@ -50,11 +45,6 @@ pub fn main(init: std.process.Init) !void {
         }
         std.process.exit(255);
     };
-
-    // The C runtime writes through libc stdio, which buffers independently of
-    // our writer. Flush first so the option messages keep their order relative
-    // to the C output.
-    try stdout_writer.flush();
 
     // Only the flags go to C now; the profile is Zig's business (it feeds the
     // config paths and the socket name).
@@ -146,7 +136,7 @@ pub fn main(init: std.process.Init) !void {
     // Startup phase 2: credentials. Both reading the token and the whole
     // first-run dialog are Zig now.
     creds = loadCredentials(arena, io, cfg) orelse blk: {
-        auth.register(io, arena, cfg, stdout_writer) catch |err| {
+        auth.register(io, arena, cfg) catch |err| {
             std.debug.print("nanotodon: registration failed: {s}\n", .{@errorName(err)});
             std.process.exit(1);
         };

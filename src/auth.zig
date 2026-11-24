@@ -17,6 +17,7 @@ const Io = std.Io;
 
 const curl = @import("curl");
 const config = @import("config.zig");
+const output = @import("out.zig");
 
 const user_agent = "nanotodon";
 const request_timeout_ms = 30_000;
@@ -52,15 +53,13 @@ pub fn register(
     io: Io,
     arena: std.mem.Allocator,
     cfg: config.Config,
-    out: *Io.Writer,
 ) !void {
     const stdin = Io.File.stdin();
 
-    try out.writeAll(
+    output.write(io,
         \\Hello! Welcome to nanotodon!
         \\
     );
-    try out.flush();
 
     // Separate buffers: `domain` is still needed after the code has been read.
     var domain_buf: [max_input + 1]u8 = undefined;
@@ -70,7 +69,7 @@ pub fn register(
     // The C version jumped back to the domain prompt on any inconsistency and
     // never gave up, so a typo costs nothing.
     while (true) {
-        try prompt(out, "First, please tell me the server where you live.\n" ++
+        output.write(io, "First, please tell me the server where you live.\n" ++
             "(https://[please enter this part]/)\n> ");
         const domain = try readField(io, stdin, &domain_buf);
         if (domain.len == 0) continue;
@@ -86,20 +85,20 @@ pub fn register(
         };
 
         const client = parseClient(arena, app_body) orelse {
-            try restart(io, arena, cfg, domain, out, "Something is wrong.\n" ++
+            try restart(io, arena, cfg, domain, "Something is wrong.\n" ++
                 "Let me start over from the beginning.\n");
             continue;
         };
 
-        try out.writeAll("Next, let's authenticate the application.\n" ++
+        output.write(io, "Next, let's authenticate the application.\n" ++
             "Open the URL below, authorize nanotodon, then paste the code it shows.\n");
 
         var url_buf: [1024]u8 = undefined;
         const url = try authorizeUrl(&url_buf, domain, client.client_id);
-        try out.writeAll(url);
-        try out.writeAll("\n");
+        output.write(io, url);
+        output.write(io, "\n");
 
-        try prompt(out, "> ");
+        output.write(io, "> ");
         const code = try readField(io, stdin, &code_buf);
         if (code.len == 0) continue;
 
@@ -108,14 +107,13 @@ pub fn register(
         // Believe the file, not the response: this is what the next start will
         // use, and it also catches a token response without access_token.
         if ((cfg.readToken(arena, io) catch null) == null) {
-            try restart(io, arena, cfg, domain, out, "Something is wrong.\n" ++
+            try restart(io, arena, cfg, domain, "Something is wrong.\n" ++
                 "Is the authorization code correct?\n" ++
                 "Let me start over from the beginning.\n");
             continue;
         }
 
-        try out.writeAll("It's done! Enjoy your nanotodon life!\n");
-        try out.flush();
+        output.write(io, "It's done! Enjoy your nanotodon life!\n");
         return;
     }
 }
@@ -128,22 +126,15 @@ fn restart(
     arena: std.mem.Allocator,
     cfg: config.Config,
     domain: []const u8,
-    out: *Io.Writer,
     message: []const u8,
 ) !void {
-    try out.writeAll(message);
-    try out.flush();
+    output.write(io, message);
 
     if (cfg.appTokenPath(arena, io, domain)) |path| {
         std.Io.Dir.cwd().deleteFile(io, path) catch {};
     } else |_| {}
     std.Io.Dir.cwd().deleteFile(io, cfg.domain_path) catch {};
     std.Io.Dir.cwd().deleteFile(io, cfg.token_path) catch {};
-}
-
-fn prompt(out: *Io.Writer, text: []const u8) !void {
-    try out.writeAll(text);
-    try out.flush();
 }
 
 /// One line from stdin without its line ending. Bytes past the newline stay
