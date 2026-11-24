@@ -68,14 +68,6 @@ void curl_fatal(CURLcode ret, const char *errbuf)
 	exit(EXIT_FAILURE);
 }
 
-// domain_stringとapiエンドポイントを合成してURLを生成する
-char *create_uri_string(const char *api)
-{
-	char *s = malloc(256);
-	sprintf(s, "https://%s/%s", domain_string, api);
-	return s;
-}
-
 // jsonツリーをパス形式(ex. "account/display_name")で掘ってjson_objectを取り出す
 int read_json_fom_path(struct sjson_node *obj, const char *path, struct sjson_node **dst)
 {

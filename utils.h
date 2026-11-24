@@ -9,8 +9,6 @@ int ustrwidth(const char *);
 
 void curl_fatal(CURLcode, const char *);
 
-char *create_uri_string(const char *);
-
 int read_json_fom_path(struct sjson_node *, const char *, struct sjson_node **);
 
 

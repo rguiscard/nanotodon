@@ -56,7 +56,6 @@ pub fn main(init: std.process.Init) !void {
 
     // Only the flags go to C now; the profile is Zig's business (it feeds the
     // config paths and the socket name).
-    cli.apply(opts);
 
     // Startup phase 1: configuration. Paths are a pure function of the
     // environment and the profile, and the directories are created here — before
@@ -118,11 +117,16 @@ pub fn main(init: std.process.Init) !void {
         },
     };
 
+    // Declared here, filled in below: bind failures must exit before the token
+    // is read, but the poster needs a stable location to read from once
+    // requests start. Nothing dereferences it before `creds` is set.
+    var creds: poster.Credentials = undefined;
+
     var srv = server.listen(
         io,
         arena,
         socket_path,
-        .{ .postFn = poster.post },
+        .{ .ctx = @ptrCast(&creds), .postFn = poster.post },
         server.default_max_concurrent,
     ) catch |err| {
         std.debug.print("nanotodon: cannot listen on {s}: {s}\n", .{ socket_path, @errorName(err) });
@@ -139,7 +143,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Startup phase 2: credentials. Both reading the token and the whole
     // first-run dialog are Zig now.
-    const creds = loadCredentials(arena, io, cfg) orelse blk: {
+    creds = loadCredentials(arena, io, cfg) orelse blk: {
         auth.register(io, arena, cfg, stdout_writer) catch |err| {
             std.debug.print("nanotodon: registration failed: {s}\n", .{@errorName(err)});
             std.process.exit(1);
@@ -152,7 +156,14 @@ pub fn main(init: std.process.Init) !void {
         };
     };
 
-    // Startup phase 3: locale, output queue and the image cache directory.
+    // Startup phase 3: locale, then the output queue (+ the image cache when
+    // built with -Dimage). The locale call moved here from C; nothing formats
+    // dates any more, but libc's numeric formatting in image.c still depends on
+    // it, so the process-wide call stays.
+    _ = std.c.setlocale(std.c.LC.ALL, "");
+
+    // Output queue and, with -Dimage, image_init() (which copies the cache dir
+    // handed over above).
     translated.nanotodon_runtime();
 
     // The stream loop blocks in curl forever, so it must not be an `Io` task:
@@ -189,17 +200,10 @@ fn streamEntry(target: stream.Target) void {
     stream.run(std.heap.smp_allocator, target);
 }
 
-/// What the streaming thread and the poster need from the config.
-const Credentials = struct {
-    domain: [:0]const u8,
-    /// The whole `Authorization: Bearer ...` line, NUL-terminated.
-    header: [:0]const u8,
-};
-
 /// Reads the token and domain from the config and hands them to C, which keeps
 /// them as statics for the poster. Returns `null` when there is no token yet,
 /// i.e. the first run needs registration.
-fn loadCredentials(arena: std.mem.Allocator, io: std.Io, cfg: config.Config) ?Credentials {
+fn loadCredentials(arena: std.mem.Allocator, io: std.Io, cfg: config.Config) ?poster.Credentials {
     const token = (cfg.readToken(arena, io) catch return null) orelse return null;
     const domain = (cfg.readDomain(arena, io) catch return null) orelse return null;
 
@@ -218,7 +222,6 @@ fn loadCredentials(arena: std.mem.Allocator, io: std.Io, cfg: config.Config) ?Cr
     const header = arena.dupeSentinel(u8, header_tmp, 0) catch return null;
     const domain_z = arena.dupeSentinel(u8, domain, 0) catch return null;
 
-    translated.nanotodon_set_credentials(header.ptr, domain_z.ptr);
     return .{ .domain = domain_z, .header = header };
 }
 
@@ -237,9 +240,7 @@ export fn nanotodon_kitty_emit(
 
 // `cli`, `loop`, `proto`, `server`, `socketpath` and `stream` are only referenced from
 // main(), which is not analyzed in a test build, so without touching them here
-// the tests inside those files would never be collected. refAllDecls also
-// forces analysis of `cli.apply()`, which otherwise only runs in the real
-// executable.
+// the tests inside those files would never be collected.
 test {
     //    _ = cli;
     std.testing.refAllDecls(auth);

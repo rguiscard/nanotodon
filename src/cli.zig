@@ -1,13 +1,12 @@
 //! Command line option handling for nanotodon.
 //!
 //! Parsing, validation, clamping and the user facing messages all live here.
-//! Only the flags are handed to the C side (`nanotodon_apply_cli_options()`);
-//! the profile stays in Zig, where it decides the config paths (src/config.zig)
-//! — `token/<profile>` and `domain/<profile>`, `default` when unnamed — and the
-//! socket name (src/socketpath.zig).
+//! Nothing is handed to C any more: the stream reads `timeline`/`limit` from
+//! `Options` (src/stream.zig), and the profile decides the config paths
+//! (src/config.zig) — `token/<profile>` and `domain/<profile>`, `default` when
+//! unnamed — and the socket name (src/socketpath.zig).
 
 const std = @import("std");
-const translated = @import("translated");
 const config = @import("config.zig");
 
 /// Values must match `NANOTODON_TIMELINE_*` in src/headers.h.
@@ -117,27 +116,6 @@ pub fn parse(it: anytype, writer: ?*std.Io.Writer) Error!Options {
 
     return opts;
 }
-
-/// Copy the parsed flags into the C side. The profile is not passed: Zig owns it
-/// (it decides the config paths and the socket name).
-pub fn apply(opts: Options) void {
-    var c_opts: C_Options = .{
-        .mono = if (opts.mono) 1 else 0,
-        .unlock = if (opts.unlock) 1 else 0,
-        .no_emoji = if (opts.no_emoji) 1 else 0,
-        .limit_timeline = opts.limit_timeline,
-        .timeline = @backingInt(opts.timeline),
-    };
-
-    translated.nanotodon_apply_cli_options(&c_opts);
-}
-
-/// translate-c exports a same-named typedef as a plain alias; fall back to the
-/// raw tag name in case only that one is emitted.
-const C_Options = if (@hasDecl(translated, "nanotodon_cli_options"))
-    translated.nanotodon_cli_options
-else
-    translated.struct_nanotodon_cli_options;
 
 /// Endpoint segment under `api/v1/streaming/` for a timeline choice.
 pub fn streamName(timeline: Timeline) []const u8 {

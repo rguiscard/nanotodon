@@ -19,28 +19,12 @@
 #endif
 #include "src/headers.h"
 
-// アクセストークン文字列
-static char access_token[256];
-
-// ドメイン文字列
-char domain_string[256];
-
 // 画像キャッシュのディレクトリ(nanotodon_set_cache_dir() が設定する)
 static char cache_dir_path[256];
 
 int monoflag = 0;
 static int hidlckflag = 1;
 static int noemojiflag = 0;
-
-// CLIオプションを反映する(src/cli.zig から起動時に一度だけ呼ばれる。
-// プロファイル・タイムライン・件数は Zig 側が持つので、ここには渡ってこない。
-// 表示に関するものだけが C に残っている。
-void nanotodon_apply_cli_options(const struct nanotodon_cli_options *o)
-{
-	monoflag = o->mono ? 1 : 0;
-	hidlckflag = o->unlock ? 0 : 1;
-	noemojiflag = o->no_emoji ? 1 : 0;
-}
 
 // ---- src/main.zig から呼ばれる起動フェーズ ----
 // 順番が意味を持つので、まとめずに名前で分けてある。
@@ -57,36 +41,14 @@ const char *nanotodon_cache_dir(void)
 	return cache_dir_path;
 }
 
-// ヘッダ用の文字列とドメインを設定する。
-void nanotodon_set_credentials(const char *auth_header, const char *domain)
-{
-	snprintf(access_token, sizeof(access_token), "%s", auth_header);
-	snprintf(domain_string, sizeof(domain_string), "%s", domain);
-}
-
 // 端末とキューの初期化。スレッドを起動する前に済ませる。
+// setlocale() は Zig (src/main.zig) が呼ぶ。
 void nanotodon_runtime(void)
 {
-	setlocale(LC_ALL, "");
-
 	squeue_init();
 #ifdef USE_KITTY
 	image_init();
 #endif
-}
-
-// ---- src/poster.zig から呼ばれるフック ----
-
-// 読み取り専用アクセサ。どちらも nanotodon_set_credentials() 以降は変化しない。
-// スレッドからそのまま読める。
-const char *nanotodon_domain(void)
-{
-	return domain_string;
-}
-
-const char *nanotodon_auth_header(void)
-{
-	return access_token;
 }
 
 // ---- src/loop.zig から呼ばれるフック ----

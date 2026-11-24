@@ -6,3 +6,4 @@
 // `curl_c` module.
 #include <curl/curl.h>
 #include <stdlib.h> // getenv, for the opt-in stream tracing
+#include <locale.h> // setlocale, called once at startup (moved out of C)

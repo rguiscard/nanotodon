@@ -5,9 +5,9 @@
 //! has no allocator or `Io` parameter. One `Easy` handle per call, so the
 //! concurrent connection handlers never share libcurl state.
 //!
-//! Everything here is read-only after startup: `nanotodon_domain()` and
-//! `nanotodon_auth_header()` return pointers to C statics that are filled in by
-//! `nanotodon_set_credentials()` before any thread starts.
+//! Everything here is read-only after startup: `Credentials` is filled in from
+//! the config before the accept thread starts and then never changes, so the
+//! concurrent connection handlers can read it without synchronisation.
 //!
 //! Note: this links against whatever libcurl `build.zig` selects. With
 //! `link_vendor = false` (the current setting) the system libcurl provides the
@@ -16,7 +16,6 @@
 
 const std = @import("std");
 const curl = @import("curl");
-const translated = @import("translated");
 const proto = @import("proto.zig");
 
 const request_timeout_ms = 30_000;
@@ -67,23 +66,30 @@ fn errorMessage(allocator: std.mem.Allocator, body: []const u8) ?[]const u8 {
     return parsed.@"error";
 }
 
-/// Signature must match `server.Poster.postFn`.
+/// What posting needs, resolved once at startup. Passed to `server.Poster` as
+/// its `ctx`, so `post()` needs no allocator and no C accessors.
+pub const Credentials = struct {
+    /// Instance hostname, no scheme.
+    domain: [:0]const u8,
+    /// The whole `Authorization: Bearer ...` line.
+    header: [:0]const u8,
+};
+
+/// Signature must match `server.Poster.postFn`; `ctx` is a `*const Credentials`.
 pub fn post(
-    _: ?*anyopaque,
+    ctx: ?*anyopaque,
     status: [:0]const u8,
     visibility: proto.Visibility,
     err_out: []u8,
 ) ?[]const u8 {
-    const domain_c = translated.nanotodon_domain() orelse
-        return fail(err_out, "no domain configured", .{});
-    const auth_c = translated.nanotodon_auth_header() orelse
-        return fail(err_out, "no access token", .{});
+    const creds: *const Credentials = @ptrCast(@alignCast(ctx orelse
+        return fail(err_out, "no credentials", .{})));
 
     var url_buf: [512]u8 = undefined;
     const url = std.mem.printSentinel(
         &url_buf,
         "https://{s}/api/v1/statuses",
-        .{std.mem.span(domain_c)},
+        .{creds.domain},
         0,
     ) catch return fail(err_out, "domain name too long", .{});
 
@@ -95,10 +101,9 @@ pub fn post(
     }) catch return fail(err_out, "curl easy init failed", .{});
     defer easy.deinit();
 
-    // The C side keeps the whole "Authorization: Bearer ..." line in one string.
     var headers: curl.Easy.Headers = .{};
     defer headers.deinit();
-    headers.add(std.mem.span(auth_c)) catch
+    headers.add(creds.header) catch
         return fail(err_out, "cannot build request headers", .{});
 
     var mime = easy.createMultiPart() catch
