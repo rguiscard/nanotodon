@@ -32,6 +32,15 @@ pub fn build(b: *std.Build) void {
 
     const dep_curl = b.dependency("curl", .{ .link_vendor = false });
 
+    // The raw libcurl declarations (no wrapper): src/stream.zig needs options the
+    // `curl` package does not expose, like "no timeout" for the SSE stream.
+    const curl_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/curl_c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    curl_c.linkSystemLibrary("curl", .{});
+
     // Kitty graphics support for image attachments (image.c). Off by default so
     // a plain `zig build` behaves exactly as before; enable with
     // `zig build -Dimage=true`. The switch is a C macro, because the decision is
@@ -126,6 +135,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "nanotodon", .module = mod },
                 .{ .name = "translated", .module = t.mod },
                 .{ .name = "curl", .module = dep_curl.module("curl") },
+                .{ .name = "curl_c", .module = curl_c.createModule() },
             },
             .link_libc = true,
         }),

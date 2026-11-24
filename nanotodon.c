@@ -19,27 +19,8 @@
 #endif
 #include "src/headers.h"
 
-static char *streaming_json = NULL;
-
-#define URI_STREAM "api/v1/streaming/"
-#define URI_TIMELINE "api/v1/timelines/"
-
-static const char *selected_stream = "user";
-static const char *selected_timeline = "home";
-static char append_timeline[64];
-static int limit_timeline = 20;
-
-#define CURL_USERAGENT "curl/" LIBCURL_VERSION
-
-// ストリーミングを受信する関数のポインタ
-static void (*streaming_received_handler)(void);
-
 // 受信したストリーミングを処理する関数のポインタ
 static void (*stream_event_handler)(struct sjson_node *);
-
-
-// Timelineの受信
-static void get_timeline(void);
 
 
 // ストリーミングでのToot受信処理,stream_event_handlerへ代入
@@ -61,38 +42,55 @@ int monoflag = 0;
 static int hidlckflag = 1;
 static int noemojiflag = 0;
 
-// curlから呼び出されるストリーミング受信関数
-static size_t streaming_callback(void* ptr, size_t size, size_t nmemb, void* data) {
-	if (size * nmemb == 0)
-		return 0;
+// Zig (src/stream.zig) が text/event-stream を組み立て、1イベント分のJSONを
+// ここへ渡す。kind は 0=update, 1=notification。
+void nanotodon_stream_dispatch(int kind, const char *json, size_t len)
+{
+	if (!json || len == 0) return;
 
-	char **json = ((char **)data);
+	// sjson_decode() scans for a NUL terminator, which the caller guarantees one
+	// byte past `len` (src/stream.zig appends it). `len` is only for validation.
+	sjson_context *ctx = sjson_create_context(0, 0, NULL);
+	struct sjson_node *node = sjson_decode(ctx, json);
+	if (!node) {
+		fprintf(stderr, "nanotodon: cannot decode a stream event (%zu bytes)\n", len);
+		sjson_destroy_context(ctx);
+		return;
+	}
 
-	size_t realsize = size * nmemb;
+	switch (kind) {
+	case 0: stream_event_update(node); break;
+	case 1: stream_event_notify(node); break;
+	default: break;
+	}
 
-	size_t length = realsize + 1;
-	char *str = *json;
-	str = realloc(str, (str ? strlen(str) : 0) + length);
-	if(*((char **)data) == NULL) strcpy(str, "");
+	sjson_destroy_context(ctx);
+}
 
-	*json = str;
+// TimelineのJSON配列(api/v1/timelines/*)を受け取り、古い順に表示する。
+// 新しいものが下端に来るよう、C版と同じく逆順にたどる。
+void nanotodon_stream_timeline(const char *json, size_t len)
+{
+	if (!json || len == 0) return;
 
-	if (str != NULL) {
-		strncat(str, ptr, realsize);
-		// 改行が来たらデータ終端(一回の受信に収まるとは限らない)
-		if(str[strlen(str)-1] == 0x0a) {
-			if(*str == ':') {
-				// ':'だけは接続維持用
-				free(str);
-				*json = NULL;
-			} else {
-				streaming_received_handler();
-			}
+	// The caller passes a NUL-terminated copy; see nanotodon_stream_dispatch().
+	sjson_context *ctx = sjson_create_context(0, 0, NULL);
+	struct sjson_node *array = sjson_decode(ctx, json);
+	if (!array) {
+		fprintf(stderr, "nanotodon: cannot decode the timeline (%zu bytes)\n", len);
+		sjson_destroy_context(ctx);
+		return;
+	}
+
+	if (array->tag == SJSON_ARRAY) {
+		for (int i = sjson_child_count(array) - 1; i >= 0; i--) {
+			stream_event_update(sjson_find_element(array, i));
 		}
 	}
 
-	return realsize;
+	sjson_destroy_context(ctx);
 }
+
 
 // ストリーミングでの通知受信処理,stream_event_handlerへ代入
 static void stream_event_notify(sjson_node *jobj_from_string)
@@ -417,216 +415,14 @@ static void stream_event_update(struct sjson_node *jobj_from_string)
 	wrefresh(pad);*/
 }
 
-// ストリーミングで受信したJSON(接続維持用データを取り除き一体化したもの)
-static void streaming_received(void)
-{
-
-	// イベント取得
-	if(strncmp(streaming_json, "event", 5) == 0) {
-		char *type = strdup(streaming_json + 7);
-		if(strncmp(type, "update", 6) == 0) stream_event_handler = stream_event_update;
-		else if(strncmp(type, "notification", 12) == 0) stream_event_handler = stream_event_notify;
-		else stream_event_handler = NULL;
-
-		char *top = type;
-		while(*type != '\n') type++;
-		type++;
-
-		// 後ろにJSONが引っ付いていればJSONバッファへ
-		if(*type != 0) {
-			free(streaming_json);
-			streaming_json = strdup(type);
-		}
-		free(top);
-	}
-
-	// JSON受信
-	if(strncmp(streaming_json, "data", 4) == 0) {
-		if(stream_event_handler) {
-			sjson_context* ctx = sjson_create_context(0, 0, NULL);
-			struct sjson_node *jobj_from_string = sjson_decode(ctx, streaming_json + 6);
-
-			//sbctx_t sb;
-			//ninitbuf(&sb);
-
-			stream_event_handler(jobj_from_string);
-
-			//nflushcache(&sb);
-			//squeue_enqueue(sb);
-
-			sjson_destroy_context(ctx);
-			stream_event_handler = NULL;
-		}
-	}
-
-	free(streaming_json);
-	streaming_json = NULL;
-}
-
-// ストリーミング受信ループ。ブロックするので、スレッドは src/main.zig が起動する。
-void nanotodon_stream_loop(void)
-{
-	get_timeline();
-
-	CURLcode ret;
-	CURL *hnd;
-	struct curl_slist *slist1;
-	char errbuf[CURL_ERROR_SIZE], *uri;
-
-	slist1 = NULL;
-	slist1 = curl_slist_append(slist1, access_token);
-	memset(errbuf, 0, sizeof errbuf);
-
-	char *uri_stream = malloc(strlen(URI_STREAM) + strlen(selected_stream) + 1);
-
-	strcpy(uri_stream, URI_STREAM);
-	strcat(uri_stream, selected_stream);
-
-	uri = create_uri_string(uri_stream);
-
-	hnd = curl_easy_init();
-	curl_easy_setopt(hnd, CURLOPT_URL, uri);
-	curl_easy_setopt(hnd, CURLOPT_NOPROGRESS, 1L);
-	curl_easy_setopt(hnd, CURLOPT_USERAGENT, CURL_USERAGENT);
-	curl_easy_setopt(hnd, CURLOPT_HTTPHEADER, slist1);
-	curl_easy_setopt(hnd, CURLOPT_MAXREDIRS, 50L);
-	curl_easy_setopt(hnd, CURLOPT_CUSTOMREQUEST, "GET");
-	curl_easy_setopt(hnd, CURLOPT_TCP_KEEPALIVE, 1L);
-	curl_easy_setopt(hnd, CURLOPT_TIMEOUT, 0);
-	curl_easy_setopt(hnd, CURLOPT_WRITEDATA, (void *)&streaming_json);
-	curl_easy_setopt(hnd, CURLOPT_WRITEFUNCTION, streaming_callback);
-	curl_easy_setopt(hnd, CURLOPT_ERRORBUFFER, errbuf);
-
-	streaming_received_handler = streaming_received;
-	stream_event_handler = NULL;
-
-	ret = curl_easy_perform(hnd);
-	if(ret != CURLE_OK) curl_fatal(ret, errbuf);
-
-	curl_easy_cleanup(hnd);
-	hnd = NULL;
-	free(uri_stream);
-	free(uri);
-	curl_slist_free_all(slist1);
-	slist1 = NULL;
-}
-
-// curlから呼び出されるHTL受信関数
-static size_t htl_callback(void* ptr, size_t size, size_t nmemb, void* data) {
-	if (size * nmemb == 0)
-		return 0;
-
-	char **json = ((char **)data);
-
-	size_t realsize = size * nmemb;
-
-	size_t length = realsize + 1;
-	char *str = *json;
-	str = realloc(str, (str ? strlen(str) : 0) + length);
-	if(*((char **)data) == NULL) strcpy(str, "");
-
-	*json = str;
-
-	if (str != NULL) {
-		strncat(str, ptr, realsize);
-	}
-
-	return realsize;
-}
-
-// Timelineの受信
-static void get_timeline(void)
-{
-	CURLcode ret;
-	CURL *hnd;
-	struct curl_slist *slist1;
-	char errbuf[CURL_ERROR_SIZE], *uri;
-
-	slist1 = NULL;
-	slist1 = curl_slist_append(slist1, access_token);
-	memset(errbuf, 0, sizeof errbuf);
-
-	char *uri_timeline = malloc(strlen(URI_TIMELINE) + strlen(selected_timeline) + (1 + 5 + 1 + 2 /*? limit = xx*/) + 1);
-
-	sprintf(append_timeline, "?limit=%d", limit_timeline);
-
-	strcpy(uri_timeline, URI_TIMELINE);
-	strcat(uri_timeline, selected_timeline);
-	strcat(uri_timeline, append_timeline);
-
-	uri = create_uri_string(uri_timeline);
-
-	char *json = NULL;
-
-	hnd = curl_easy_init();
-	curl_easy_setopt(hnd, CURLOPT_URL, uri);
-	curl_easy_setopt(hnd, CURLOPT_NOPROGRESS, 1L);
-	curl_easy_setopt(hnd, CURLOPT_USERAGENT, CURL_USERAGENT);
-	curl_easy_setopt(hnd, CURLOPT_HTTPHEADER, slist1);
-	curl_easy_setopt(hnd, CURLOPT_MAXREDIRS, 50L);
-	curl_easy_setopt(hnd, CURLOPT_TCP_KEEPALIVE, 1L);
-	curl_easy_setopt(hnd, CURLOPT_WRITEDATA, (void *)&json);
-	curl_easy_setopt(hnd, CURLOPT_WRITEFUNCTION, htl_callback);
-	curl_easy_setopt(hnd, CURLOPT_ERRORBUFFER, errbuf);
-
-	ret = curl_easy_perform(hnd);
-	if(ret != CURLE_OK) curl_fatal(ret, errbuf);
-
-
-	sjson_context* ctx = sjson_create_context(0, 0, NULL);
-	struct sjson_node *jobj_from_string = sjson_decode(ctx, json);
-	sjson_tag type;
-
-	type = jobj_from_string->tag;
-
-	if(type == SJSON_ARRAY) {
-		for (int i = sjson_child_count(jobj_from_string) - 1; i >= 0; i--) {
-			struct sjson_node *obj = sjson_find_element(jobj_from_string, i);
-
-			//sbctx_t sb;
-			//ninitbuf(&sb);
-
-			stream_event_update(obj);
-
-			//nflushcache(&sb);
-			//squeue_enqueue(sb);
-		}
-	}
-
-	sjson_destroy_context(ctx);
-
-	curl_easy_cleanup(hnd);
-	hnd = NULL;
-	free(uri_timeline);
-	free(uri);
-	curl_slist_free_all(slist1);
-	slist1 = NULL;
-}
-
 // CLIオプションを反映する(src/cli.zig から起動時に一度だけ呼ばれる。
-// プロファイルは Zig 側が持つので、ここには渡ってこない)
+// プロファイル・タイムライン・件数は Zig 側が持つので、ここには渡ってこない。
+// 表示に関するものだけが C に残っている。
 void nanotodon_apply_cli_options(const struct nanotodon_cli_options *o)
 {
 	monoflag = o->mono ? 1 : 0;
 	hidlckflag = o->unlock ? 0 : 1;
 	noemojiflag = o->no_emoji ? 1 : 0;
-
-	if(o->limit_timeline >= 0) {
-		limit_timeline = o->limit_timeline;
-	}
-
-	switch(o->timeline) {
-	case NANOTODON_TIMELINE_LOCAL:
-		selected_stream = "public/local";
-		selected_timeline = "public?local=true";
-		break;
-	case NANOTODON_TIMELINE_PUBLIC:
-		selected_stream = "public";
-		selected_timeline = "public?local=false";
-		break;
-	default: // NANOTODON_TIMELINE_HOME: 既定値のまま
-		break;
-	}
 }
 
 // ---- src/main.zig から呼ばれる起動フェーズ ----
@@ -683,7 +479,9 @@ void nanotodon_pump_output(void)
 {
 	sbctx_t sb;
 
-	if(!squeue_dequeue(&sb)) {
+	// squeue_dequeue() は成功時に0、空の時に1を返す。以前は空のときにも
+	// 未初期化の sb.buf を free して書き出していた。
+	if(squeue_dequeue(&sb) == 0 && sb.buf != NULL) {
 		fwrite(sb.buf, sb.bufptr, 1, stdout);
 		free(sb.buf);
 	}

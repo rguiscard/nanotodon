@@ -12,6 +12,7 @@ const proto = @import("proto.zig");
 const poster = @import("poster.zig");
 const server = @import("server.zig");
 const socketpath = @import("socketpath.zig");
+const stream = @import("stream.zig");
 
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
@@ -136,18 +137,18 @@ pub fn main(init: std.process.Init) !void {
 
     // Startup phase 2: credentials. Both reading the token and the whole
     // first-run dialog are Zig now.
-    if (!loadCredentials(arena, io, cfg)) {
+    const creds = loadCredentials(arena, io, cfg) orelse blk: {
         auth.register(io, arena, cfg, stdout_writer) catch |err| {
             std.debug.print("nanotodon: registration failed: {s}\n", .{@errorName(err)});
             std.process.exit(1);
         };
-        // The dialog writes the token file; handing it to C is the same step as
-        // on a normal start.
-        if (!loadCredentials(arena, io, cfg)) {
+        // The dialog writes the token file; loading it is the same step as on a
+        // normal start.
+        break :blk loadCredentials(arena, io, cfg) orelse {
             std.debug.print("nanotodon: registration did not produce an access token\n", .{});
             std.process.exit(1);
-        }
-    }
+        };
+    };
 
     // Startup phase 3: locale, output queue and the image cache directory.
     translated.nanotodon_runtime();
@@ -156,7 +157,8 @@ pub fn main(init: std.process.Init) !void {
     // an `io.async` task would occupy a pool worker permanently and, when
     // `async_limit` is 0 (single CPU, or `getCpuCount()` failing), would run
     // inline and never return to this function.
-    const stream_thread = std.Thread.spawn(.{}, streamEntry, .{}) catch |err| {
+    const stream_target = stream.targetOf(opts, creds.domain, creds.header);
+    const stream_thread = std.Thread.spawn(.{}, streamEntry, .{stream_target}) catch |err| {
         std.debug.print("nanotodon: cannot start the streaming thread: {s}\n", .{@errorName(err)});
         std.process.exit(1);
     };
@@ -175,32 +177,47 @@ pub fn main(init: std.process.Init) !void {
     try loop.run(io);
 }
 
-/// Plain Zig entry point for `std.Thread.spawn`; the C side only exposes an
-/// extern function, which is awkward to hand to `spawn` directly.
-fn streamEntry() void {
-    translated.nanotodon_stream_loop();
+/// Plain Zig entry point for `std.Thread.spawn`. The loop logs and returns on
+/// failure; it never exits the process.
+fn streamEntry(target: stream.Target) void {
+    // The thread owns no arena of its own: the pages it allocates stay for the
+    // lifetime of the process (the loop itself never ends), and it runs
+    // concurrently with the UI, so it must not touch a scratch arena that
+    // another thread frees.
+    stream.run(std.heap.smp_allocator, target);
 }
 
-/// Reads the token and domain from the config and hands them to C, which keeps
-/// them as statics for the curl calls. Returns false when there is no token yet,
-/// i.e. the first run needs registration.
-fn loadCredentials(arena: std.mem.Allocator, io: std.Io, cfg: config.Config) bool {
-    const token = (cfg.readToken(arena, io) catch return false) orelse return false;
-    const domain = (cfg.readDomain(arena, io) catch return false) orelse return false;
+/// What the streaming thread and the poster need from the config.
+const Credentials = struct {
+    domain: [:0]const u8,
+    /// The whole `Authorization: Bearer ...` line, NUL-terminated.
+    header: [:0]const u8,
+};
 
+/// Reads the token and domain from the config and hands them to C, which keeps
+/// them as statics for the poster. Returns `null` when there is no token yet,
+/// i.e. the first run needs registration.
+fn loadCredentials(arena: std.mem.Allocator, io: std.Io, cfg: config.Config) ?Credentials {
+    const token = (cfg.readToken(arena, io) catch return null) orelse return null;
+    const domain = (cfg.readDomain(arena, io) catch return null) orelse return null;
+
+    // Both strings must outlive this function: the streaming thread reads the
+    // header much later, so a stack buffer here would be dead by then.
     var hdr_buf: [256 + 32]u8 = undefined;
-    const header = std.mem.printSentinel(
+    const header_tmp = std.mem.printSentinel(
         &hdr_buf,
         "Authorization: Bearer {s}",
         .{token},
         0,
     ) catch {
         std.debug.print("nanotodon: access token is too long\n", .{});
-        return false;
+        return null;
     };
+    const header = arena.dupeSentinel(u8, header_tmp, 0) catch return null;
+    const domain_z = arena.dupeSentinel(u8, domain, 0) catch return null;
 
-    translated.nanotodon_set_credentials(header.ptr, domain.ptr);
-    return true;
+    translated.nanotodon_set_credentials(header.ptr, domain_z.ptr);
+    return .{ .domain = domain_z, .header = header };
 }
 
 /// C entry point for src/image.c (declared in src/headers.h). It lives in the
@@ -216,13 +233,13 @@ export fn nanotodon_kitty_emit(
     kitty.emit(sbctx, rgba, w, h);
 }
 
-// `cli`, `loop`, `proto`, `server` and `socketpath` are only referenced from
+// `cli`, `loop`, `proto`, `server`, `socketpath` and `stream` are only referenced from
 // main(), which is not analyzed in a test build, so without touching them here
 // the tests inside those files would never be collected. refAllDecls also
 // forces analysis of `cli.apply()`, which otherwise only runs in the real
 // executable.
 test {
-//    _ = cli;
+    //    _ = cli;
     std.testing.refAllDecls(auth);
     std.testing.refAllDecls(cli);
     std.testing.refAllDecls(config);
@@ -232,6 +249,7 @@ test {
     std.testing.refAllDecls(proto);
     std.testing.refAllDecls(server);
     std.testing.refAllDecls(socketpath);
+    std.testing.refAllDecls(stream);
 }
 
 test "simple test" {

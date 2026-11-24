@@ -126,7 +126,7 @@ pub fn apply(opts: Options) void {
         .unlock = if (opts.unlock) 1 else 0,
         .no_emoji = if (opts.no_emoji) 1 else 0,
         .limit_timeline = opts.limit_timeline,
-        .timeline = @intFromEnum(opts.timeline),
+        .timeline = @backingInt(opts.timeline),
     };
 
     translated.nanotodon_apply_cli_options(&c_opts);
@@ -139,11 +139,22 @@ const C_Options = if (@hasDecl(translated, "nanotodon_cli_options"))
 else
     translated.struct_nanotodon_cli_options;
 
-fn streamName(timeline: Timeline) []const u8 {
+/// Endpoint segment under `api/v1/streaming/` for a timeline choice.
+pub fn streamName(timeline: Timeline) []const u8 {
     return switch (timeline) {
         .home => "user",
         .local => "public/local",
         .public => "public",
+    };
+}
+
+/// What follows `api/v1/timelines/` for a timeline choice. The `local` flag is a
+/// query parameter, not a path segment, so it stays in this string.
+pub fn timelineName(timeline: Timeline) []const u8 {
+    return switch (timeline) {
+        .home => "home",
+        .local => "public?local=true",
+        .public => "public?local=false",
     };
 }
 
@@ -293,7 +304,7 @@ test "stream endpoint names" {
 }
 
 test "timeline enum values match the C macros" {
-    try testing.expectEqual(@as(c_int, 0), @intFromEnum(Timeline.home));
-    try testing.expectEqual(@as(c_int, 1), @intFromEnum(Timeline.local));
-    try testing.expectEqual(@as(c_int, 2), @intFromEnum(Timeline.public));
+    try testing.expectEqual(@as(c_int, 0), @backingInt(Timeline.home));
+    try testing.expectEqual(@as(c_int, 1), @backingInt(Timeline.local));
+    try testing.expectEqual(@as(c_int, 2), @backingInt(Timeline.public));
 }
