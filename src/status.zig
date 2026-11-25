@@ -13,10 +13,16 @@
 //! flush left. The wrapper's own author line is not printed: it would repeat
 //! the booster, and Mastodon leaves the wrapper's content empty anyway.
 //!
-//! Every status becomes one string, images included, and leaves through a
-//! single `output.writeSeparated()`, so a status, its pictures and the rule
-//! above it print atomically. A boost stays one unit that way: the nested
-//! status and its media land in the same buffer as the text that names them.
+//! Every status becomes one string, images included, and the rule that opens it
+//! is part of that string: the rule is the status's first line, so whoever
+//! renders a status decides what a status looks like, and `out.zig` only has to
+//! serialise bytes. Every status gets one, the first included, because in a
+//! scrolling terminal even the first status has text above it to be set apart
+//! from.
+//!
+//! One buffer per status also keeps pictures with their text: a boost stays one
+//! unit, with the nested status and its media in the same buffer as the text
+//! that names them.
 
 const std = @import("std");
 const output = @import("out.zig");
@@ -29,6 +35,28 @@ const htmltext = @import("htmltext.zig");
 /// descent stops, so a hostile status cannot exhaust the stack.
 const max_depth = 3;
 
+/// Width of the rule above a status, in columns. Fixed rather than measured:
+/// asking the terminal costs a syscall per status and makes `render` depend on
+/// the terminal, while a fixed rule keeps rendering a pure function of the
+/// status. A narrow rule also reads as a divider between toots rather than as a
+/// frame around each one.
+const rule_width = 30;
+
+/// Glyph the rule is drawn with: box-drawing U+2500, one column wide in every
+/// font that has it.
+const rule_glyph = "\u{2500}";
+
+/// The rule, ready to prepend, ending in the newline that makes it a line.
+const rule: [rule_width * rule_glyph.len + 1]u8 = blk: {
+    var buf: [rule_width * rule_glyph.len + 1]u8 = undefined;
+    var n: usize = 0;
+    while (n < rule_width * rule_glyph.len) : (n += rule_glyph.len) {
+        @memcpy(buf[n..][0..rule_glyph.len], rule_glyph);
+    }
+    buf[n] = '\n';
+    break :blk buf;
+};
+
 /// Renders one status into `out`. Returns false when the payload is not a JSON
 /// object this code understands.
 ///
@@ -39,6 +67,15 @@ const max_depth = 3;
 /// The element is parsed once into a `std.json.Value`; rendering then walks
 /// values (`renderValue`), so a boost can hand its nested object to the same
 /// formatter without re-encoding it as JSON.
+///
+/// Every status opens with the rule, the first one included: this is a scrolling
+/// terminal, so the text above a status may be a prompt or whatever a previous
+/// run left there. The rule says where the status starts, and keeping it on all
+/// of them means `render` needs no memory of what came before.
+///
+/// The rule is drawn here, once, above everything else: a boost gets one rule
+/// over its `Boosted by` line, and `renderValue` never draws one while it
+/// recurses into the boosted status.
 pub fn render(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -52,6 +89,10 @@ pub fn render(
     // permanently. `out` already holds copies, so it stays valid afterwards.
     var parsed_state = std.json.parseFromSlice(std.json.Value, allocator, json, .{}) catch return false;
     defer parsed_state.deinit();
+    // The object check comes before the rule: a payload that is not a status is
+    // rejected with nothing written, not even a rule with no status under it.
+    if (parsed_state.value != .object) return false;
+    try out.appendSlice(allocator, &rule);
     return renderValue(io, allocator, cache_dir, parsed_state.value, out, 0) catch return false;
 }
 
@@ -202,9 +243,9 @@ pub fn deliver(io: std.Io, allocator: std.mem.Allocator, cache_dir: ?std.Io.Dir,
     const ok = render(io, allocator, cache_dir, json, &line) catch return false;
     if (!ok or line.items.len == 0) return false;
 
-    // `writeSeparated`, not `write`: the rule above everything but the first
-    // status is drawn in `out.zig`, so `render` keeps producing plain text.
-    output.writeSeparated(io, line.items);
+    // `writeLineStart`, not `write`: a prompt or an image escape may have left
+    // the cursor mid-line, and the rule must not land on the end of that line.
+    output.writeLineStart(io, line.items);
     return true;
 }
 
@@ -221,11 +262,62 @@ fn testIo() std.Io {
     return threaded.io();
 }
 
+/// Renders `json` with its rule stripped. Every status opens with the rule, so
+/// taking it off here lets the tests below assert the status itself; the rule
+/// has its own test.
 fn renderAlloc(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(allocator);
+    defer out.deinit(allocator);
     try testing.expect(try render(testIo(), allocator, null, json, &out));
-    return out.toOwnedSlice(allocator);
+    try testing.expect(std.mem.startsWith(u8, out.items, &rule));
+    return allocator.dupe(u8, out.items[rule.len..]);
+}
+
+test "the rule is the status's first line" {
+    const arena = testing.allocator;
+    const json =
+        \\{"content":"<p>hello</p>","created_at":"t","visibility":"public",
+        \\ "account":{"acct":"alice"}}
+    ;
+    const full = try renderAlloc(arena, json);
+    defer arena.free(full);
+    try testing.expectEqualStrings("alice [public] - t\nhello\n\n", full);
+
+    // The full buffer is the rule followed by that text, and a second call
+    // yields the same bytes: `render` remembers nothing between statuses.
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(arena);
+    try testing.expect(try render(testIo(), arena, null, json, &out));
+    try testing.expectEqualStrings(
+        "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}" ++
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}" ++
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n" ++
+            "alice [public] - t\nhello\n\n",
+        out.items,
+    );
+
+    var again: std.ArrayList(u8) = .empty;
+    defer again.deinit(arena);
+    try testing.expect(try render(testIo(), arena, null, json, &again));
+    try testing.expectEqualStrings(out.items, again.items);
+}
+
+test "a boost gets one rule, above the boost line" {
+    const arena = testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(arena);
+    const json =
+        \\{"created_at":"t","visibility":"public","account":{"acct":"dave"},
+        \\ "reblog":{"content":"inner","created_at":"u","visibility":"public",
+        \\           "account":{"acct":"carol"}}}
+    ;
+    try testing.expect(try render(testIo(), arena, null, json, &out));
+    try testing.expectEqualStrings(
+        "Boosted by dave\ncarol [public] - u\ninner\n\n",
+        out.items[rule.len..],
+    );
+    // Exactly one rule: the nested status must not draw its own.
+    try testing.expectEqual(@as(?usize, null), std.mem.indexOf(u8, out.items[rule.len..], rule_glyph));
 }
 
 test "plain status" {
@@ -436,10 +528,13 @@ test "a non-object payload is rejected" {
     defer out.deinit(arena);
     try testing.expect(!try render(testIo(), arena, null, "[1,2,3]", &out));
     try testing.expect(!try render(testIo(), arena, null, "nope", &out));
+    // Rejected before anything is written, not even the rule.
+    try testing.expectEqual(@as(usize, 0), out.items.len);
+
     // A non-object `reblog` is not a boost either; the status renders as a
     // plain toot with the usual degraded placeholders.
-    out.clearRetainingCapacity();
     try testing.expect(try render(testIo(), arena, null, "{\"reblog\":[1]}", &out));
-    try testing.expectEqualStrings("? [?] - ?\n\n", out.items);
+    try testing.expect(std.mem.startsWith(u8, out.items, &rule));
+    try testing.expectEqualStrings("? [?] - ?\n\n", out.items[rule.len..]);
 }
 

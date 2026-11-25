@@ -222,9 +222,10 @@ fn loadCredentials(arena: std.mem.Allocator, io: std.Io, cfg: config.Config) ?po
 }
 
 // No C file drives Zig output any more: images are assembled in Zig
-// (src/image.zig) and leave with their status through one output.writeSeparated(),
-// so there is no `export` that has to smuggle a std.Io through C. Anything C
-// writes to stdout directly would break that atomicity.
+// (src/image.zig) and leave inside the status buffer, so one write() carries a
+// status with its pictures and its rule. There is no `export` that has to
+// smuggle a std.Io through C, and anything C wrote to stdout directly would
+// break that atomicity.
 
 // `cli`, `proto`, `server`, `socketpath` and `stream` are only referenced from
 // main(), which is not analyzed in a test build, so without touching them here
