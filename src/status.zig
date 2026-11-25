@@ -25,6 +25,7 @@
 //! that names them.
 
 const std = @import("std");
+const zz = @import("zigzag");
 const output = @import("out.zig");
 const images = @import("image.zig");
 const htmltext = @import("htmltext.zig");
@@ -41,6 +42,29 @@ const max_depth = 3;
 /// status. A narrow rule also reads as a divider between toots rather than as a
 /// frame around each one.
 const rule_width = 30;
+
+/// The account line's look: a background bar behind `{acct} ({display})
+/// [{visibility}] - {date}`, so the eye lands on who wrote the toot. Only the
+/// text is wrapped — the newline after it is written outside the style, so the
+/// background covers exactly one line and stops before the body.
+///
+/// An experiment: swap `background` for a `foreground`, add `.bold_attr = true`,
+/// or try another `zz.Color`. Nothing else in the file needs to change.
+const account_style: zz.Style = .{ .background = zz.Color.blue, .inline_mode = true };
+
+/// The `Boosted by {acct}` line's look, driven the same way as `account_style`.
+/// A different colour because it labels the wrapper, not the author of the toot
+/// underneath it.
+const boost_style: zz.Style = .{ .background = zz.Color.green, .inline_mode = true };
+
+/// Renders `text` with `style` and appends it to `out`. The slice `Style.render`
+/// returns is freed straight away: the bytes are copied into `out`, which is the
+/// buffer the caller keeps.
+fn appendStyled(allocator: std.mem.Allocator, style: zz.Style, text: []const u8, out: *std.ArrayList(u8)) !void {
+    const styled = try style.render(allocator, text);
+    defer allocator.free(styled);
+    try out.appendSlice(allocator, styled);
+}
 
 /// Glyph the rule is drawn with: box-drawing U+2500, one column wide in every
 /// font that has it.
@@ -121,8 +145,13 @@ fn renderValue(
     const object = status.object;
 
     if (boosterName(object)) |by| {
-        try out.appendSlice(allocator, "Boosted by ");
-        try out.appendSlice(allocator, by);
+        // Styled as one string, like the account line, so the bar covers the
+        // booster's name and nothing else.
+        var label: std.ArrayList(u8) = .empty;
+        defer label.deinit(allocator);
+        try label.appendSlice(allocator, "Boosted by ");
+        try label.appendSlice(allocator, by);
+        try appendStyled(allocator, boost_style, label.items, out);
         try out.append(allocator, '\n');
 
         if (depth < max_depth) {
@@ -141,17 +170,22 @@ fn renderValue(
     const visibility = optString(object, &.{"visibility"}) orelse "?";
     const created_at = optString(object, &.{"created_at"}) orelse "?";
 
-    // `{acct} ({display}) [{visibility}] - {date}`, one line.
-    try out.appendSlice(allocator, acct);
+    // `{acct} ({display}) [{visibility}] - {date}`, one line on a background
+    // bar. Built into a scratch buffer first because `Style.render` needs the
+    // whole line as one string, then styled and appended in one go.
+    var header: std.ArrayList(u8) = .empty;
+    defer header.deinit(allocator);
+    try header.appendSlice(allocator, acct);
     if (display.len != 0 and !std.mem.eql(u8, display, acct)) {
-        try out.appendSlice(allocator, " (");
-        try out.appendSlice(allocator, display);
-        try out.appendSlice(allocator, ")");
+        try header.appendSlice(allocator, " (");
+        try header.appendSlice(allocator, display);
+        try header.appendSlice(allocator, ")");
     }
-    try out.appendSlice(allocator, " [");
-    try out.appendSlice(allocator, visibility);
-    try out.appendSlice(allocator, "] - ");
-    try out.appendSlice(allocator, created_at);
+    try header.appendSlice(allocator, " [");
+    try header.appendSlice(allocator, visibility);
+    try header.appendSlice(allocator, "] - ");
+    try header.appendSlice(allocator, created_at);
+    try appendStyled(allocator, account_style, header.items, out);
     try out.append(allocator, '\n');
 
     // The body as terminal text, the links it pointed at, then a blank line to
@@ -262,15 +296,57 @@ fn testIo() std.Io {
     return threaded.io();
 }
 
-/// Renders `json` with its rule stripped. Every status opens with the rule, so
-/// taking it off here lets the tests below assert the status itself; the rule
-/// has its own test.
+/// Renders `json` with its rule stripped and its ANSI codes removed. Every
+/// status opens with the rule and its account line is styled, so taking both off
+/// lets the tests below assert the visible text; the rule and the styling have
+/// their own tests.
 fn renderAlloc(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
     try testing.expect(try render(testIo(), allocator, null, json, &out));
     try testing.expect(std.mem.startsWith(u8, out.items, &rule));
-    return allocator.dupe(u8, out.items[rule.len..]);
+    return plain(allocator, out.items[rule.len..]);
+}
+
+/// `text` with every SGR sequence (`ESC [ … m`) removed: the bytes a reader
+/// sees, without the colour. No other escape kind is expected in a status.
+fn plain(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
+    var i: usize = 0;
+    while (i < text.len) {
+        if (std.mem.startsWith(u8, text[i..], "\x1b[")) {
+            const end = std.mem.indexOfScalarPos(u8, text, i + 2, 'm') orelse break;
+            i = end + 1;
+            continue;
+        }
+        try buf.append(allocator, text[i]);
+        i += 1;
+    }
+    return buf.toOwnedSlice(allocator);
+}
+
+test "the account line is styled and the body is not" {
+    const arena = testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(arena);
+    try testing.expect(try render(testIo(), arena, null,
+        \\{"content":"<p>hello</p>","created_at":"t","visibility":"public",
+        \\ "account":{"acct":"alice"}}
+    , &out));
+
+    // The account line opens with the background colour and is closed with a
+    // reset before its newline; the body after it carries no escape at all.
+    const status = out.items[rule.len..];
+    try testing.expect(std.mem.indexOf(u8, status, "\x1b[44m") != null);
+    const header_end = std.mem.indexOfScalar(u8, status, '\n') orelse unreachable;
+    try testing.expect(std.mem.indexOf(u8, status[0..header_end], "\x1b[") != null);
+    try testing.expect(std.mem.indexOf(u8, status[header_end..], "\x1b[") == null);
+
+    // Stripped, it is exactly the text the other tests compare against.
+    const text = try plain(arena, out.items[rule.len..]);
+    defer arena.free(text);
+    try testing.expectEqualStrings("alice [public] - t\nhello\n\n", text);
 }
 
 test "the rule is the status's first line" {
@@ -288,12 +364,16 @@ test "the rule is the status's first line" {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(arena);
     try testing.expect(try render(testIo(), arena, null, json, &out));
+    // The rule, then the styled account line and body; compared as visible text
+    // because the account line carries colour.
+    const text = try plain(arena, out.items);
+    defer arena.free(text);
     try testing.expectEqualStrings(
         "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}" ++
             "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}" ++
             "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n" ++
             "alice [public] - t\nhello\n\n",
-        out.items,
+        text,
     );
 
     var again: std.ArrayList(u8) = .empty;
@@ -312,12 +392,38 @@ test "a boost gets one rule, above the boost line" {
         \\           "account":{"acct":"carol"}}}
     ;
     try testing.expect(try render(testIo(), arena, null, json, &out));
+    const text = try plain(arena, out.items[rule.len..]);
+    defer arena.free(text);
     try testing.expectEqualStrings(
         "Boosted by dave\ncarol [public] - u\ninner\n\n",
-        out.items[rule.len..],
+        text,
     );
     // Exactly one rule: the nested status must not draw its own.
     try testing.expectEqual(@as(?usize, null), std.mem.indexOf(u8, out.items[rule.len..], rule_glyph));
+}
+
+test "the boost line is green and the nested author line is blue" {
+    const arena = testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(arena);
+    try testing.expect(try render(testIo(), arena, null,
+        \\{"created_at":"t","visibility":"public","account":{"acct":"dave"},
+        \\ "reblog":{"content":"inner","created_at":"u","visibility":"public",
+        \\           "account":{"acct":"carol"}}}
+    , &out));
+
+    // First line after the rule: the green `Boosted by`. Second: the blue
+    // account line of the boosted status.
+    const body = out.items[rule.len..];
+    const line1_end = std.mem.indexOfScalar(u8, body, '\n') orelse unreachable;
+    const line1 = body[0..line1_end];
+    const line2_end = std.mem.indexOfScalarPos(u8, body, line1_end + 1, '\n') orelse unreachable;
+    const line2 = body[line1_end + 1 .. line2_end];
+
+    try testing.expect(std.mem.indexOf(u8, line1, "\x1b[42m") != null);
+    try testing.expect(std.mem.indexOf(u8, line2, "\x1b[44m") != null);
+    // The body of the boosted toot carries no colour.
+    try testing.expect(std.mem.indexOf(u8, body[line2_end..], "\x1b[") == null);
 }
 
 test "plain status" {
@@ -535,6 +641,8 @@ test "a non-object payload is rejected" {
     // plain toot with the usual degraded placeholders.
     try testing.expect(try render(testIo(), arena, null, "{\"reblog\":[1]}", &out));
     try testing.expect(std.mem.startsWith(u8, out.items, &rule));
-    try testing.expectEqualStrings("? [?] - ?\n\n", out.items[rule.len..]);
+    const text = try plain(arena, out.items[rule.len..]);
+    defer arena.free(text);
+    try testing.expectEqualStrings("? [?] - ?\n\n", text);
 }
 
