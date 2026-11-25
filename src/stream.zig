@@ -355,21 +355,51 @@ pub fn run(io: std.Io, allocator: std.mem.Allocator, target: Target) void {
     streamForever(io, allocator, target);
 }
 
-fn streamForever(io: std.Io, allocator: std.mem.Allocator, target: Target) void {
-    var path_buf: [256]u8 = undefined;
-    var url_buf: [512]u8 = undefined;
-    const path = streamingPath(&path_buf, target.stream) catch
-        return std.debug.print("nanotodon: the streaming URL is too long\n", .{});
-    const url = apiUrl(&url_buf, target.domain, path) catch
-        return std.debug.print("nanotodon: the streaming URL is too long\n", .{});
+/// First wait before a retry, doubled after each attempt that never connected.
+const retry_min_ms: u64 = 1_000;
 
-    const handle = newHandle() orelse
-        return std.debug.print("nanotodon: cannot initialise curl for streaming\n", .{});
+/// Ceiling for that wait. A sleep, a dropped Wi-Fi link or a restarting instance
+/// all come back within a minute, and the user can always Ctrl-C.
+const retry_max_ms: u64 = 60_000;
+
+/// How long one reconnect attempt may spend connecting. Without it, an attempt
+/// started while the network is still down blocks until the OS gives up.
+const connect_timeout_s: c_long = 10;
+
+/// The wait before retry number `attempts` (1 = the first retry). Doubles each
+/// time up to `retry_max_ms`; pure, so the schedule is testable without sleeping.
+fn retryDelayMs(attempts: u32) u64 {
+    var delay: u64 = retry_min_ms;
+    var i: u32 = 1;
+    while (i < attempts) : (i += 1) {
+        delay *= 2;
+        if (delay >= retry_max_ms) return retry_max_ms;
+    }
+    return @min(delay, retry_max_ms);
+}
+
+/// One attempt at the stream. Returns once the connection has ended, and says
+/// whether it had got as far as receiving data: that is what tells a stable
+/// connection that dropped (retry promptly) from one that never came up (back
+/// off). `fatal` marks a failure that retrying cannot fix.
+const Attempt = struct {
+    connected: bool,
+    fatal: bool,
+};
+
+fn streamOnce(io: std.Io, allocator: std.mem.Allocator, target: Target, url: [:0]const u8) Attempt {
+    const handle = newHandle() orelse {
+        std.debug.print("nanotodon: cannot initialise curl for streaming\n", .{});
+        return .{ .connected = false, .fatal = true };
+    };
     defer c.curl_easy_cleanup(handle);
 
     const headers = HeaderList.init(target.auth_header.ptr);
     defer headers.deinit();
 
+    // Fresh per attempt: a disconnect can land mid-event, and a partial event
+    // left in the framer would be finished by the next connection's first
+    // bytes, producing a corrupt status.
     var sink: Sink = .{ .framer = .{}, .allocator = allocator, .io = io, .target = target };
     defer sink.framer.deinit(allocator);
 
@@ -383,7 +413,8 @@ fn streamForever(io: std.Io, allocator: std.mem.Allocator, target: Target) void 
     setOpt(handle, c.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));
     setOpt(handle, c.CURLOPT_CUSTOMREQUEST, "GET");
     setOpt(handle, c.CURLOPT_TCP_KEEPALIVE, @as(c_long, 1));
-    // No timeout: the stream is idle whenever nobody posts.
+    setOpt(handle, c.CURLOPT_CONNECTTIMEOUT, connect_timeout_s);
+    // No overall timeout: the stream is idle whenever nobody posts.
     setOpt(handle, c.CURLOPT_TIMEOUT, @as(c_long, 0));
     setOpt(handle, c.CURLOPT_WRITEDATA, &sink);
     setOpt(handle, c.CURLOPT_WRITEFUNCTION, Sink.write);
@@ -399,8 +430,54 @@ fn streamForever(io: std.Io, allocator: std.mem.Allocator, target: Target) void 
         sink.chunks,
         sink.events,
     });
-    if (sink.failed) return std.debug.print("nanotodon: cannot parse the event stream\n", .{});
+    if (sink.failed) {
+        // The framer itself is broken; reconnecting would loop on the same input.
+        std.debug.print("nanotodon: cannot parse the event stream\n", .{});
+        return .{ .connected = sink.chunks != 0, .fatal = true };
+    }
     if (ret != c.CURLE_OK) report("stream", ret, &errbuf);
+    return .{ .connected = sink.chunks != 0, .fatal = false };
+}
+
+/// Sleeps for `ms` on the monotonic clock. `Io.sleep` rather than a thread
+/// primitive: this thread already owns an `Io`, and the wait must not be
+/// cancelled by anything but process death (Ctrl-C). `awake` does not count time
+/// spent suspended, so a resume does not silently consume the whole backoff.
+fn sleepMs(io: std.Io, ms: u64) void {
+    io.sleep(.fromMilliseconds(@intCast(ms)), .awake) catch {};
+}
+
+/// Opens the stream and keeps it open. A dropped connection — the machine
+/// sleeping is the usual cause, Mastodon closing an idle stream the other — is
+/// retried with a doubling wait, and each wait is announced so the user knows
+/// the client is still alive rather than dead. Ctrl-C quits at any time.
+fn streamForever(io: std.Io, allocator: std.mem.Allocator, target: Target) void {
+    var path_buf: [256]u8 = undefined;
+    var url_buf: [512]u8 = undefined;
+    const path = streamingPath(&path_buf, target.stream) catch
+        return std.debug.print("nanotodon: the streaming URL is too long\n", .{});
+    const url = apiUrl(&url_buf, target.domain, path) catch
+        return std.debug.print("nanotodon: the streaming URL is too long\n", .{});
+
+    var attempts: u32 = 0;
+    while (true) {
+        attempts += 1;
+        const ended = streamOnce(io, allocator, target, url);
+        if (ended.fatal) return;
+
+        // `connected` means bytes arrived, so the credentials and the URL are
+        // fine and the drop is transient: retry promptly instead of backing off.
+        if (ended.connected) {
+            attempts = 0;
+        } else if (attempts > 8) {
+            std.debug.print("nanotodon: giving up after {d} failed reconnects; restart to try again\n", .{attempts});
+            return;
+        }
+
+        const delay = retryDelayMs(attempts);
+        std.debug.print("nanotodon: stream lost; reconnecting in {d}s (Ctrl-C quits)\n", .{delay / 1000});
+        sleepMs(io, delay);
+    }
 }
 
 fn fetchTimeline(io: std.Io, allocator: std.mem.Allocator, target: Target) void {
@@ -598,6 +675,19 @@ test "sse: a payload with embedded newlines keeps them" {
 
     try drainAll(&framer, testing.allocator, "event: update\ndata: {\"a\":\ndata: 1}\n\n", &seen);
     try testing.expectEqualStrings("update:{\"a\":\n1}|", seen.items);
+}
+
+test "retry delay doubles and caps" {
+    // 1s, 2s, 4s ... then the ceiling, and never beyond it.
+    try testing.expectEqual(@as(u64, 1_000), retryDelayMs(1));
+    try testing.expectEqual(@as(u64, 2_000), retryDelayMs(2));
+    try testing.expectEqual(@as(u64, 4_000), retryDelayMs(3));
+    try testing.expectEqual(@as(u64, 8_000), retryDelayMs(4));
+    try testing.expectEqual(@as(u64, 16_000), retryDelayMs(5));
+    try testing.expectEqual(@as(u64, 32_000), retryDelayMs(6));
+    try testing.expectEqual(@as(u64, 60_000), retryDelayMs(7));
+    try testing.expectEqual(retry_max_ms, retryDelayMs(64));
+    try testing.expectEqual(retry_max_ms, retryDelayMs(1_000_000));
 }
 
 test "apiUrl builds the endpoint under the domain" {
